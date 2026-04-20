@@ -10,6 +10,19 @@ function normalizeText(value) {
   return String(value == null ? '' : value).trim();
 }
 
+function compareVersions(a, b) {
+  const pa = String(a || '').split('.').map((x) => Number(x) || 0);
+  const pb = String(b || '').split('.').map((x) => Number(x) || 0);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i += 1) {
+    const av = pa[i] || 0;
+    const bv = pb[i] || 0;
+    if (av < bv) return -1;
+    if (av > bv) return 1;
+  }
+  return 0;
+}
+
 function parseDisabledCodes() {
   const raw = normalizeText(process.env.DEEPWIKI_PREFLIGHT_DISABLE);
   if (!raw) return new Set();
@@ -45,7 +58,7 @@ async function probeKnowledgeBase({ searchUrl, timeoutMs } = {}) {
       payload = null;
     }
     const minVersion = normalizeText(process.env.KNOWLEDGE_BASE_MIN_VERSION);
-    if (minVersion && payload && normalizeText(payload.version) && payload.version < minVersion) {
+    if (minVersion && payload && normalizeText(payload.version) && compareVersions(normalizeText(payload.version), minVersion) < 0) {
       return {
         code: 'DW_E_KB_VERSION_MISMATCH',
         detail: `KB version ${payload.version} < required ${minVersion}`,

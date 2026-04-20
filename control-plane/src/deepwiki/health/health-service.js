@@ -38,8 +38,9 @@ function durationMs(startedAt, endedAt) {
 function buildRunTimeline({ nodes = [], pipelineRun = null } = {}) {
   const cleanedNodes = (Array.isArray(nodes) ? nodes : [])
     .map((node) => {
+      const endedValue = node.ended_at || node.finished_at || node.end_time;
       const started = toMillis(node.started_at || node.start_time);
-      const finished = toMillis(node.finished_at || node.end_time);
+      const finished = toMillis(endedValue);
       return {
         node_id: node.id ?? null,
         node_key: node.node_key || node.stage_key || null,
@@ -48,8 +49,8 @@ function buildRunTimeline({ nodes = [], pipelineRun = null } = {}) {
         attempt: Number(node.attempt || 1),
         error_code: node.error_code || null,
         started_at: node.started_at || null,
-        finished_at: node.finished_at || null,
-        duration_ms: durationMs(node.started_at || node.start_time, node.finished_at || node.end_time),
+        finished_at: endedValue || null,
+        duration_ms: durationMs(node.started_at || node.start_time, endedValue),
         _start: started,
         _finish: finished,
       };
@@ -113,7 +114,7 @@ function aggregateStageTrends(runsNodes) {
         bucket = { stage_key: key, durations: [], statuses: {}, errors: {} };
         perStage.set(key, bucket);
       }
-      const dur = durationMs(node.started_at || node.start_time, node.finished_at || node.end_time);
+      const dur = durationMs(node.started_at || node.start_time, node.ended_at || node.finished_at || node.end_time);
       if (dur != null) bucket.durations.push(dur);
       const status = node.status || 'unknown';
       bucket.statuses[status] = (bucket.statuses[status] || 0) + 1;
@@ -156,7 +157,7 @@ function summarizeErrors(nodesFromRuns) {
       entry.count += 1;
       const stageKey = node.node_key || node.stage_key || 'unknown';
       entry.stages[stageKey] = (entry.stages[stageKey] || 0) + 1;
-      const ts = node.finished_at || node.started_at;
+      const ts = node.ended_at || node.finished_at || node.started_at;
       if (ts && (!entry.last_seen || new Date(ts) > new Date(entry.last_seen))) {
         entry.last_seen = ts;
       }

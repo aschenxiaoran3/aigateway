@@ -24,6 +24,20 @@ test('percentile computes p50/p95 on sorted durations', () => {
   assert.equal(percentile([], 50), null);
 });
 
+test('buildRunTimeline reads raw DB column ended_at when finished_at absent', () => {
+  const nodes = [
+    { id: 1, node_key: 'a', status: 'completed',
+      started_at: '2024-01-01T00:00:00Z', ended_at: '2024-01-01T00:00:30Z' },
+    { id: 2, node_key: 'b', status: 'failed',
+      started_at: '2024-01-01T00:01:00Z', ended_at: '2024-01-01T00:02:00Z', error_code: 'DW_E_STAGE_TIMEOUT' },
+  ];
+  const result = buildRunTimeline({ nodes });
+  assert.equal(result.timeline[0].duration_ms, 30_000);
+  assert.equal(result.timeline[0].finished_at, '2024-01-01T00:00:30Z');
+  assert.equal(result.timeline[1].duration_ms, 60_000);
+  assert.equal(result.total_duration_ms, 120_000);
+});
+
 test('buildRunTimeline sorts by start and counts statuses', () => {
   const nodes = [
     { id: 2, node_key: 'b', node_label: 'B', status: 'failed',

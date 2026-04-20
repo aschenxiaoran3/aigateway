@@ -1688,9 +1688,11 @@ app.get('/api/v1/deepwiki/health/active-runs', async (_req, res, next) => {
   try {
     const rows = await db.query(
       `SELECT r.id, r.status, r.pipeline_run_id, r.updated_at,
-              pr.started_at, pr.project_code, r.repo_source_id
+              pr.started_at, pr.project_code, r.repo_source_id,
+              rs.branch
        FROM gateway_deepwiki_runs r
        LEFT JOIN gateway_pipeline_runs pr ON pr.id = r.pipeline_run_id
+       LEFT JOIN gateway_repo_snapshots rs ON rs.id = r.snapshot_id
        WHERE r.status IN ('running', 'queued', 'pending', 'retrying')
        ORDER BY r.updated_at DESC
        LIMIT 100`
@@ -1862,7 +1864,8 @@ function extractManifestSummary(run) {
     const key = node.node_key || node.stage_key;
     if (!key) continue;
     const started = node.started_at ? new Date(node.started_at).getTime() : null;
-    const finished = node.finished_at ? new Date(node.finished_at).getTime() : null;
+    const endedValue = node.ended_at || node.finished_at;
+    const finished = endedValue ? new Date(endedValue).getTime() : null;
     const duration_ms = started && finished ? Math.max(0, finished - started) : 0;
     stages[key] = { duration_ms, status: node.status || null };
   }

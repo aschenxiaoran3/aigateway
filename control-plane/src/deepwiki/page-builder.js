@@ -961,13 +961,24 @@ function buildBusinessLogicFromInventory(inventory) {
     .map((t) => ({
       table: t.table_name || t.table,
       path: t.path,
-      columns: (t.columns || []).map((c) => ({
-        name: c.name,
-        notNull: Boolean(c.notNull),
-        primary: Boolean(c.primary),
-        unique: Boolean(c.unique),
-        comment: c.comment || '',
-      })),
+      // parseSqlTableDefinitions returns columns as plain strings (column
+      // names); richer sources may return { name, notNull, primary, unique,
+      // comment } objects. Normalise both shapes.
+      columns: (t.columns || []).map((c) => {
+        if (typeof c === 'string') {
+          return { name: c, notNull: false, primary: false, unique: false, comment: '' };
+        }
+        if (c && typeof c === 'object') {
+          return {
+            name: c.name || '',
+            notNull: Boolean(c.notNull),
+            primary: Boolean(c.primary),
+            unique: Boolean(c.unique),
+            comment: c.comment || '',
+          };
+        }
+        return null;
+      }).filter(Boolean),
     }));
   const hasAny = ruleComments.length
     || testMethods.length

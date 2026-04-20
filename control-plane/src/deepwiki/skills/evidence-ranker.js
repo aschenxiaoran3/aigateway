@@ -80,7 +80,10 @@ function inferTestBoost(source) {
   // are a high-signal source of business rules: invert the historical penalty
   // into a modest positive weight so business evidence anchored in tests is
   // surfaced rather than suppressed.
-  if (/mock|fixture|sample|demo|stub/.test(normalized)) return 0;
+  // Exclude mock/fixture/sample/demo/stub paths from the boost, but allow
+  // MockMvc integration tests (which happen to contain "mock" as a substring)
+  // through — they are genuine tests and should still score.
+  if (/mock|fixture|sample|demo|stub/.test(normalized) && !/mockmvc/.test(normalized)) return 0;
   return /\btest\b|\bspec\b|mockmvc|__tests__|itest|\.test\.|\.spec\.|\/tests?\//i.test(normalizeText(source)) ? 1 : 0;
 }
 

@@ -807,8 +807,8 @@ export interface DeepWikiManifestDiffResponse {
       statusChanged: boolean;
     }>;
     summary: {
-      added_assets: number;
-      removed_assets: number;
+      added_assets: string[];
+      removed_assets: string[];
       warning_count: number;
       warnings: Array<{ kind: string; key: string; ratio?: number | null; beforeStatus?: string | null; afterStatus?: string | null }>;
     };

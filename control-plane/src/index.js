@@ -1827,23 +1827,6 @@ app.post('/api/v1/deepwiki/runs/:id/abort', async (req, res, next) => {
   }
 });
 
-app.post('/api/v1/deepwiki/runs/:id/retry', async (req, res, next) => {
-  try {
-    const runId = Number(req.params.id);
-    const run = await db.getDeepWikiRunById(runId);
-    if (!run) return res.status(404).json({ success: false, error: 'Deep Wiki run not found' });
-    if (typeof db.resetDeepWikiRunForRetry === 'function') {
-      const result = await db.resetDeepWikiRunForRetry(runId);
-      deepWikiQueue.enqueue(runId);
-      res.json({ success: true, data: { run_id: runId, retried: true, result } });
-      return;
-    }
-    res.status(400).json({ success: false, error: 'retry not supported in this build' });
-  } catch (error) {
-    next(error);
-  }
-});
-
 app.get('/api/v1/deepwiki/runs/:id/manifest-diff', async (req, res, next) => {
   try {
     const runId = Number(req.params.id);

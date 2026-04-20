@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Button,
@@ -62,11 +62,16 @@ const DeepWikiHealthPanel: React.FC = () => {
   const [trendLimit, setTrendLimit] = useState<number>(20);
   const [loading, setLoading] = useState(false);
 
+  const selectedRunIdRef = useRef<number | null>(null);
+  const selectedProjectIdRef = useRef<number | null>(null);
+  useEffect(() => { selectedRunIdRef.current = selectedRunId; }, [selectedRunId]);
+  useEffect(() => { selectedProjectIdRef.current = selectedProjectId; }, [selectedProjectId]);
+
   const loadProjects = async () => {
     try {
       const list = await deepWikiApi.listProjects();
       setProjects(list);
-      if (list.length && selectedProjectId == null) {
+      if (list.length && selectedProjectIdRef.current == null) {
         setSelectedProjectId(list[0].id);
       }
     } catch (e) {
@@ -79,7 +84,7 @@ const DeepWikiHealthPanel: React.FC = () => {
     try {
       const list = await deepWikiApi.listActiveRuns();
       setActive(list);
-      if (list.length && selectedRunId == null) {
+      if (list.length && selectedRunIdRef.current == null) {
         setSelectedRunId(list[0].run_id);
       }
     } catch (e) {
@@ -138,7 +143,8 @@ const DeepWikiHealthPanel: React.FC = () => {
     void refreshAll();
     const t = setInterval(() => {
       void loadActive();
-      if (selectedRunId) void loadTimeline(selectedRunId);
+      const currentRunId = selectedRunIdRef.current;
+      if (currentRunId) void loadTimeline(currentRunId);
     }, 15_000);
     return () => clearInterval(t);
   }, []);

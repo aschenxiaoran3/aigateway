@@ -11,6 +11,8 @@ dist/
 coverage/
 data/
 storage/
+!control-plane/src/deepwiki/core/storage/
+!control-plane/src/deepwiki/core/storage/file-store.js
 tmp/
 .venv/
 .pytest_cache/

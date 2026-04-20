@@ -711,6 +711,110 @@ export interface DeepWikiRunRow {
   updated_at?: string;
 }
 
+export interface DeepWikiActiveRun {
+  run_id: number | null;
+  status: string | null;
+  project_id: number | null;
+  project_code: string | null;
+  pipeline_run_id: number | null;
+  started_at: string | null;
+  updated_at: string | null;
+  branch: string | null;
+}
+
+export interface DeepWikiTimelineNode {
+  node_id: number | null;
+  node_key: string | null;
+  node_label: string | null;
+  status: string | null;
+  attempt: number;
+  error_code: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  duration_ms: number | null;
+}
+
+export interface DeepWikiRunTimeline {
+  run_id: number | null;
+  run_status: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  total_duration_ms: number | null;
+  stats: { total: number; completed: number; failed: number; running: number };
+  timeline: DeepWikiTimelineNode[];
+}
+
+export interface DeepWikiStageTrend {
+  stage_key: string;
+  sample_size: number;
+  duration_p50_ms: number | null;
+  duration_p95_ms: number | null;
+  failure_count: number;
+  failure_ratio: number;
+  status_counts: Record<string, number>;
+  error_counts: Record<string, number>;
+}
+
+export interface DeepWikiProjectTrends {
+  project_id: number;
+  run_sample: number;
+  trends: DeepWikiStageTrend[];
+}
+
+export interface DeepWikiErrorSummary {
+  code: string;
+  count: number;
+  stages: Record<string, number>;
+  last_seen: string | null;
+}
+
+export interface DeepWikiProjectErrors {
+  project_id: number;
+  errors: DeepWikiErrorSummary[];
+}
+
+export interface DeepWikiManifestDiffResponse {
+  run_id: number | null;
+  compare_to: number | null;
+  diff: {
+    counters: Array<{
+      key: string;
+      before: number;
+      after: number;
+      delta: number;
+      ratio: number | null;
+      warn: boolean;
+    }>;
+    assets: Array<{
+      key: string;
+      before: number;
+      after: number;
+      delta: number;
+      ratio: number | null;
+      added: boolean;
+      removed: boolean;
+      warn: boolean;
+    }>;
+    stages: Array<{
+      stage: string;
+      beforeDuration: number;
+      afterDuration: number;
+      durationDelta: number;
+      durationRatio: number | null;
+      beforeStatus: string | null;
+      afterStatus: string | null;
+      slowWarn: boolean;
+      statusChanged: boolean;
+    }>;
+    summary: {
+      added_assets: string[];
+      removed_assets: string[];
+      warning_count: number;
+      warnings: Array<{ kind: string; key: string; ratio?: number | null; beforeStatus?: string | null; afterStatus?: string | null }>;
+    };
+  };
+}
+
 export interface DeepWikiRunDetail extends DeepWikiRunRow {
   summary_json?: Record<string, unknown>;
   repo_source?: DeepWikiRepoRow & { metadata_json?: Record<string, unknown> };
@@ -1054,6 +1158,18 @@ export const deepWikiApi = {
     unwrapData(await apiClient.post(`/v1/deepwiki/repos/${repoSourceId}/sync-config`, payload)),
   retryRun: async (runId: number): Promise<DeepWikiRunDetail> =>
     unwrapData(await apiClient.post(`/v1/deepwiki/runs/${runId}/retry`)),
+  abortRun: async (runId: number): Promise<{ run_id: number; pipeline_run_id: number | null; status: string }> =>
+    unwrapData(await apiClient.post(`/v1/deepwiki/runs/${runId}/abort`)),
+  getRunTimeline: async (runId: number): Promise<DeepWikiRunTimeline> =>
+    unwrapData(await apiClient.get(`/v1/deepwiki/runs/${runId}/timeline`)),
+  listActiveRuns: async (): Promise<DeepWikiActiveRun[]> =>
+    unwrapData(await apiClient.get('/v1/deepwiki/health/active-runs')),
+  getProjectTrends: async (projectId: number, limit?: number): Promise<DeepWikiProjectTrends> =>
+    unwrapData(await apiClient.get(`/v1/deepwiki/projects/${projectId}/health/trends${toQueryString({ limit })}`)),
+  getProjectErrors: async (projectId: number, limit?: number): Promise<DeepWikiProjectErrors> =>
+    unwrapData(await apiClient.get(`/v1/deepwiki/projects/${projectId}/health/errors${toQueryString({ limit })}`)),
+  getRunManifestDiff: async (runId: number, compareTo?: number): Promise<DeepWikiManifestDiffResponse> =>
+    unwrapData(await apiClient.get(`/v1/deepwiki/runs/${runId}/manifest-diff${toQueryString({ compare_to: compareTo })}`)),
   reingestRun: async (runId: number): Promise<DeepWikiRunDetail> =>
     unwrapData(await apiClient.post(`/v1/deepwiki/runs/${runId}/reingest`)),
   createDocBundle: async (

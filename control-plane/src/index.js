@@ -35,6 +35,16 @@ const { createApprovalStore } = require('./approval/store');
 const { createHarnessNotifier } = require('./integrations/harnessNotifier');
 const { createHumanPromptNotifier } = require('./integrations/humanPromptNotifier');
 const memoryStore = require('./memory/store');
+const { runPreflight } = require('./deepwiki/preflight');
+const { DeepWikiError } = require('./deepwiki/errors/error-codes');
+const { getSharedSupervisor } = require('./deepwiki/health/kb-supervisor');
+const {
+  buildRunTimeline,
+  aggregateStageTrends,
+  summarizeErrors,
+  summarizeActiveRuns,
+} = require('./deepwiki/health/health-service');
+const { computeManifestDiff } = require('./deepwiki/health/manifest-diff');
 
 const logDir = path.join(__dirname, '../logs');
 if (!fs.existsSync(logDir)) {
@@ -1578,17 +1588,293 @@ app.get('/api/v1/deepwiki/projects/:id/default-published-snapshot', async (req, 
 app.post('/api/v1/deepwiki/projects/:id/regenerate', async (req, res, next) => {
   try {
     const body = req.body || {};
+    const projectId = Number(req.params.id);
+    const skipPreflight = body.skip_preflight === true
+      || String(req.query.skip_preflight || '') === '1'
+      || String(process.env.DEEPWIKI_SKIP_PREFLIGHT || '') === '1';
+
+    let preflight = { ok: true, failures: [], skipped: [] };
+    if (!skipPreflight) {
+      let repoPath = '';
+      try {
+        const bindings = await db.getDeepWikiProjectRepoBindings(projectId);
+        const primary = bindings.find((item) => item.is_primary) || bindings[0];
+        if (primary && primary.local_path) {
+          repoPath = db.resolveWorkspacePath(primary.local_path) || primary.local_path;
+        }
+      } catch (lookupError) {
+        logger.warn('preflight_repo_lookup_failed', { projectId, error: lookupError.message });
+      }
+      preflight = await runPreflight({
+        db,
+        repoPath,
+        branch: body.branch || '',
+      });
+      if (!preflight.ok) {
+        const kbFailed = (preflight.failures || []).some((item) => item.code === 'DW_E_KB_UNREACHABLE');
+        if (kbFailed) {
+          try {
+            const supervisor = getSharedSupervisor();
+            const healResult = await supervisor.ensureReady({ attempts: 2, intervalMs: 1000 });
+            if (healResult.ok) {
+              preflight = await runPreflight({
+                db,
+                repoPath,
+                branch: body.branch || '',
+              });
+              preflight.healed = true;
+            } else {
+              preflight.healed = false;
+              preflight.heal_attempts = healResult.attempts;
+            }
+          } catch (healError) {
+            logger.warn('kb_supervisor_heal_failed', { error: healError.message });
+          }
+        }
+        if (!preflight.ok) {
+          return res.status(422).json({
+            success: false,
+            error: {
+              code: 'DW_E_PREFLIGHT_FAILED',
+              message: '前置依赖校验未通过，已拦截本次生成请求',
+              failures: preflight.failures,
+              healed: preflight.healed === true,
+            },
+          });
+        }
+      }
+    }
+
     const data = await db.createDeepWikiRunRequest({
       ...body,
-      project_id: Number(req.params.id),
+      project_id: projectId,
       branch: body.branch || '',
     });
     deepWikiQueue.enqueue(data.run_id);
-    res.status(201).json({ success: true, data });
+    res.status(201).json({ success: true, data, preflight });
+  } catch (error) {
+    if (error instanceof DeepWikiError) {
+      return res.status(422).json({ success: false, error: error.toJSON() });
+    }
+    next(error);
+  }
+});
+
+app.get('/api/v1/deepwiki/projects/:id/preflight', async (req, res, next) => {
+  try {
+    const projectId = Number(req.params.id);
+    let repoPath = '';
+    try {
+      const bindings = await db.getDeepWikiProjectRepoBindings(projectId);
+      const primary = bindings.find((item) => item.is_primary) || bindings[0];
+      if (primary && primary.local_path) {
+        repoPath = db.resolveWorkspacePath(primary.local_path) || primary.local_path;
+      }
+    } catch (lookupError) {
+      logger.warn('preflight_repo_lookup_failed', { projectId, error: lookupError.message });
+    }
+    const result = await runPreflight({
+      db,
+      repoPath,
+      branch: String(req.query.branch || ''),
+    });
+    res.json({ success: true, data: result });
   } catch (error) {
     next(error);
   }
 });
+
+app.get('/api/v1/deepwiki/health/active-runs', async (_req, res, next) => {
+  try {
+    const rows = await db.query(
+      `SELECT r.id, r.status, r.pipeline_run_id, r.updated_at,
+              pr.started_at, pr.project_code, r.repo_source_id,
+              rs.branch
+       FROM gateway_deepwiki_runs r
+       LEFT JOIN gateway_pipeline_runs pr ON pr.id = r.pipeline_run_id
+       LEFT JOIN gateway_repo_snapshots rs ON rs.id = r.snapshot_id
+       WHERE r.status IN ('running', 'queued', 'pending', 'retrying')
+       ORDER BY r.updated_at DESC
+       LIMIT 100`
+    );
+    const data = summarizeActiveRuns(rows);
+    res.json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/v1/deepwiki/runs/:id/timeline', async (req, res, next) => {
+  try {
+    const runId = Number(req.params.id);
+    const run = await db.getDeepWikiRunById(runId);
+    if (!run) return res.status(404).json({ success: false, error: 'Deep Wiki run not found' });
+    let nodes = Array.isArray(run.nodes) ? run.nodes : [];
+    const timeline = buildRunTimeline({ nodes, pipelineRun: run.pipeline_run || null });
+    res.json({ success: true, data: timeline });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/v1/deepwiki/projects/:id/health/trends', async (req, res, next) => {
+  try {
+    const projectId = Number(req.params.id);
+    const limit = Math.min(50, Math.max(1, Number(req.query.limit || 20)));
+    const runs = await db.query(
+      `SELECT DISTINCT r.id, r.pipeline_run_id
+       FROM gateway_deepwiki_runs r
+       INNER JOIN gateway_wiki_snapshots s ON s.run_id = r.id
+       WHERE s.project_id = ?
+       ORDER BY r.updated_at DESC
+       LIMIT ?`,
+      [projectId, limit]
+    );
+    const pipelineRunIds = runs.map((row) => row.pipeline_run_id).filter((id) => id != null);
+    let runsNodes = [];
+    if (pipelineRunIds.length) {
+      const placeholders = pipelineRunIds.map(() => '?').join(', ');
+      const nodes = await db.query(
+        `SELECT * FROM gateway_run_nodes WHERE pipeline_run_id IN (${placeholders}) ORDER BY id ASC`,
+        pipelineRunIds
+      );
+      const byPipelineRun = new Map();
+      for (const node of nodes) {
+        const key = Number(node.pipeline_run_id);
+        if (!byPipelineRun.has(key)) byPipelineRun.set(key, []);
+        byPipelineRun.get(key).push(node);
+      }
+      runsNodes = pipelineRunIds.map((id) => byPipelineRun.get(Number(id)) || []);
+    }
+    const trends = aggregateStageTrends(runsNodes);
+    res.json({
+      success: true,
+      data: {
+        project_id: projectId,
+        run_sample: runs.length,
+        trends,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/v1/deepwiki/projects/:id/health/errors', async (req, res, next) => {
+  try {
+    const projectId = Number(req.params.id);
+    const limit = Math.min(50, Math.max(1, Number(req.query.limit || 20)));
+    const runs = await db.query(
+      `SELECT DISTINCT r.pipeline_run_id
+       FROM gateway_deepwiki_runs r
+       INNER JOIN gateway_wiki_snapshots s ON s.run_id = r.id
+       WHERE s.project_id = ? AND r.pipeline_run_id IS NOT NULL
+       ORDER BY r.updated_at DESC
+       LIMIT ?`,
+      [projectId, limit]
+    );
+    const pipelineRunIds = runs.map((row) => row.pipeline_run_id).filter((id) => id != null);
+    let runsNodes = [];
+    if (pipelineRunIds.length) {
+      const placeholders = pipelineRunIds.map(() => '?').join(', ');
+      const nodes = await db.query(
+        `SELECT * FROM gateway_run_nodes
+         WHERE pipeline_run_id IN (${placeholders})
+           AND status IN ('failed', 'blocked')
+         ORDER BY id ASC`,
+        pipelineRunIds
+      );
+      const byPipelineRun = new Map();
+      for (const node of nodes) {
+        const key = Number(node.pipeline_run_id);
+        if (!byPipelineRun.has(key)) byPipelineRun.set(key, []);
+        byPipelineRun.get(key).push(node);
+      }
+      runsNodes = pipelineRunIds.map((id) => byPipelineRun.get(Number(id)) || []);
+    }
+    const errors = summarizeErrors(runsNodes);
+    res.json({ success: true, data: { project_id: projectId, errors } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/v1/deepwiki/runs/:id/abort', async (req, res, next) => {
+  try {
+    const runId = Number(req.params.id);
+    const run = await db.getDeepWikiRunById(runId);
+    if (!run) return res.status(404).json({ success: false, error: 'Deep Wiki run not found' });
+    const pipelineRunId = run.pipeline_run_id || (run.pipeline_run && run.pipeline_run.id) || null;
+    await db.query(
+      `UPDATE gateway_deepwiki_runs SET status = 'aborted', updated_at = NOW() WHERE id = ?`,
+      [runId]
+    );
+    if (pipelineRunId) {
+      await db.query(
+        `UPDATE gateway_pipeline_runs
+         SET status = 'aborted', ended_at = NOW(), updated_at = NOW()
+         WHERE id = ?`,
+        [pipelineRunId]
+      );
+      await db.query(
+        `UPDATE gateway_run_nodes
+         SET status = 'aborted', updated_at = NOW()
+         WHERE pipeline_run_id = ? AND status IN ('running', 'queued', 'pending')`,
+        [pipelineRunId]
+      );
+    }
+    res.json({ success: true, data: { run_id: runId, pipeline_run_id: pipelineRunId, status: 'aborted' } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/v1/deepwiki/runs/:id/manifest-diff', async (req, res, next) => {
+  try {
+    const runId = Number(req.params.id);
+    const run = await db.getDeepWikiRunById(runId);
+    if (!run) return res.status(404).json({ success: false, error: 'Deep Wiki run not found' });
+    const previousId = Number(req.query.compare_to || 0);
+    let previousRun = null;
+    if (previousId) {
+      previousRun = await db.getDeepWikiRunById(previousId);
+    }
+    const currentManifest = extractManifestSummary(run);
+    const previousManifest = previousRun ? extractManifestSummary(previousRun) : {};
+    const diff = computeManifestDiff(previousManifest, currentManifest);
+    res.json({
+      success: true,
+      data: {
+        run_id: runId,
+        compare_to: previousRun ? previousRun.id : null,
+        diff,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+function extractManifestSummary(run) {
+  if (!run) return {};
+  const summary = run.summary_json || {};
+  const manifest = summary.manifest || {};
+  const stages = {};
+  for (const node of run.nodes || []) {
+    const key = node.node_key || node.stage_key;
+    if (!key) continue;
+    const started = node.started_at ? new Date(node.started_at).getTime() : null;
+    const endedValue = node.ended_at || node.finished_at;
+    const finished = endedValue ? new Date(endedValue).getTime() : null;
+    const duration_ms = started && finished ? Math.max(0, finished - started) : 0;
+    stages[key] = { duration_ms, status: node.status || null };
+  }
+  return {
+    stages,
+    counters: manifest.counters || {},
+    assets: manifest.asset_counts || {},
+  };
+}
 
 app.get('/api/v1/deepwiki/providers', async (_req, res, next) => {
   try {

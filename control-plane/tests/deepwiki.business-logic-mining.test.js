@@ -326,6 +326,59 @@ test('buildInventoryEnforcerContext aggregates inventory paths into allowlist', 
   assert.ok(ctx.allowedFiles.has('test/OrderServiceTest.java'));
 });
 
+test('renderBusinessLogicPage strict mode keeps transitions with event/entity citations (no path)', () => {
+  const ctx = buildEnforcerContext({
+    allowedPaths: ['src/main/java/order/OrderService.java'],
+    mode: 'strict',
+  });
+  const page = renderBusinessLogicPage(
+    {
+      business_rules: [],
+      test_evidence: [],
+      state_machines_with_guards: [
+        {
+          entity: 'Order',
+          states: ['CREATED', 'PAID'],
+          transitions: [
+            {
+              from: 'CREATED',
+              to: 'PAID',
+              trigger: 'pay',
+              citation: { type: 'event', name: 'OrderPaidEvent' },
+            },
+            {
+              from: 'PAID',
+              to: 'SHIPPED',
+              trigger: 'ship',
+              citation: { type: 'entity', name: 'ShipmentEntity' },
+            },
+            {
+              from: 'SHIPPED',
+              to: 'DELIVERED',
+              trigger: 'deliver',
+              citation: { type: 'api', path: 'src/main/java/order/OrderService.java', line_start: 100, line_end: 100 },
+            },
+            {
+              from: 'DELIVERED',
+              to: 'CLOSED',
+              trigger: 'close',
+              citation: { type: 'api', path: 'src/main/java/unknown/Ghost.java', line_start: 1, line_end: 1 },
+            },
+          ],
+        },
+      ],
+    },
+    { enforcerContext: ctx },
+  );
+  assert.ok(page, 'page should render in strict mode with event/entity citations');
+  assert.equal(page.metadata_json.citation_enforcement.dropped_transitions, 1, 'only the unknown-path transition should be dropped');
+  assert.ok(/触发：pay/.test(page.content), 'event-cited transition survives strict mode');
+  assert.ok(/触发：ship/.test(page.content), 'entity-cited transition survives strict mode');
+  assert.ok(/触发：deliver/.test(page.content), 'valid path-cited transition survives');
+  assert.ok(!/Ghost\.java/.test(page.content), 'unknown-path citation is dropped');
+  assert.ok(!/触发：close/.test(page.content), 'transition with dropped unknown-path citation is removed');
+});
+
 test('renderBusinessLogicPage returns null when no signals exist', () => {
   const empty = renderBusinessLogicPage({ business_rules: [], test_evidence: [], state_machines_with_guards: [] });
   assert.equal(empty, null);

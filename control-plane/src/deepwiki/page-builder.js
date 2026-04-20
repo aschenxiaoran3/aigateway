@@ -1087,8 +1087,11 @@ function renderBusinessLogicPage(assets, options = {}) {
     const transitions = Array.isArray(machine.transitions)
       ? machine.transitions
           .map((t) => {
-            const cite = enforceCitation(t.citation, ctx);
-            if (ctx && ctx.mode === 'strict' && t.citation && !cite) {
+            // Only file-path citations are enforceable; event/entity reference
+            // citations (no `path`) pass through unchanged.
+            const hasFilePath = t.citation && typeof t.citation === 'object' && t.citation.path;
+            const cite = hasFilePath ? enforceCitation(t.citation, ctx) : null;
+            if (ctx && ctx.mode === 'strict' && hasFilePath && !cite) {
               manifest.dropped_transitions += 1;
               return null;
             }

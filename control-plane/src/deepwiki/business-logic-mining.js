@@ -504,6 +504,25 @@ function deriveBusinessLogicAssets(options) {
     }
   }
 
+  const collectFromRepos = (camelKey, snakeKey) => {
+    const result = [];
+    for (const repo of ensureArray(topology.repos)) {
+      if (!repo || typeof repo !== 'object') continue;
+      const records = ensureArray(repo[camelKey] || repo[snakeKey]);
+      for (const rec of records) {
+        if (!rec || typeof rec !== 'object') continue;
+        result.push(rec);
+      }
+    }
+    return result;
+  };
+
+  const throwStatements = collectFromRepos('throwStatements', 'throw_statements');
+  const exceptionHandlers = collectFromRepos('exceptionHandlers', 'exception_handlers');
+  const validationAnnotations = collectFromRepos('validationAnnotations', 'validation_annotations');
+  const assertionStatements = collectFromRepos('assertionStatements', 'assertion_statements');
+  const calculationHints = collectFromRepos('calculationHints', 'calculation_hints');
+
   // Config.requirements 也算一级业务规则来源
   for (const requirement of ensureArray(config && config.requirements)) {
     const text = safeString(requirement);
@@ -515,10 +534,14 @@ function deriveBusinessLogicAssets(options) {
     });
   }
 
+  const apiContracts = ensureArray(dataContracts.apiContracts || dataContracts.api_contracts);
+  const erModel = ensureArray(dataContracts.erModel || dataContracts.er_model);
+  const eventCatalog = ensureArray(dataContracts.eventCatalog || dataContracts.event_catalog);
+
   const business_rules = extractRulesFromComments({
     commentRecords,
-    apiContracts: ensureArray(dataContracts.apiContracts || dataContracts.api_contracts),
-    erModel: ensureArray(dataContracts.erModel || dataContracts.er_model),
+    apiContracts,
+    erModel,
     lexicon,
   });
 
@@ -529,9 +552,37 @@ function deriveBusinessLogicAssets(options) {
 
   const state_machines_with_guards = upgradeStateMachinesWithGuards({
     stateMachines: ensureArray(semantic.stateMachines || semantic.state_machines),
-    apiContracts: ensureArray(dataContracts.apiContracts || dataContracts.api_contracts),
-    eventCatalog: ensureArray(dataContracts.eventCatalog || dataContracts.event_catalog),
+    apiContracts,
+    eventCatalog,
     commentRecords,
+    lexicon,
+  });
+
+  const scenarios = extractScenarios({
+    testEvidence: test_evidence,
+    throwStatements,
+    commentRecords,
+    apiContracts,
+    lexicon,
+  });
+
+  const calculations = extractCalculations({
+    calculationHints,
+    commentRecords,
+    lexicon,
+  });
+
+  const failure_modes = extractFailureModes({
+    throwStatements,
+    exceptionHandlers,
+    commentRecords,
+    lexicon,
+  });
+
+  const invariants = extractInvariants({
+    validationAnnotations,
+    assertionStatements,
+    erModel,
     lexicon,
   });
 
@@ -544,14 +595,498 @@ function deriveBusinessLogicAssets(options) {
     test_evidence_count: test_evidence.length,
     state_machine_count: state_machines_with_guards.length,
     transition_count: state_machines_with_guards.reduce((acc, sm) => acc + ensureArray(sm.transitions).length, 0),
+    scenario_count: scenarios.length,
+    scenario_by_type: scenarios.reduce((acc, s) => {
+      acc[s.type] = (acc[s.type] || 0) + 1;
+      return acc;
+    }, {}),
+    calculation_count: calculations.length,
+    failure_mode_count: failure_modes.length,
+    invariant_count: invariants.length,
+    invariant_by_scope: invariants.reduce((acc, inv) => {
+      const k = inv.scope || 'unknown';
+      acc[k] = (acc[k] || 0) + 1;
+      return acc;
+    }, {}),
   };
 
   return {
     business_rules,
     test_evidence,
     state_machines_with_guards,
+    scenarios,
+    calculations,
+    failure_modes,
+    invariants,
     summary,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Extractor 4: extractScenarios
+// ---------------------------------------------------------------------------
+//
+// 产出 happy / branch / exception 三类业务场景：
+//   - happy 从测试 given-when-then
+//   - branch 从含分支关键词的 rule_comments + apiContracts
+//   - exception 从 throw_statements
+// ---------------------------------------------------------------------------
+
+const BRANCH_KEYWORD_REGEX = /\bif\b|\belse\b|\bwhen\b|\botherwise\b|\bunless\b|\bexcept\b|否则|如果|当|一旦|只有|仅当/i;
+
+function extractScenarios(options) {
+  const {
+    testEvidence = [],
+    throwStatements = [],
+    commentRecords = [],
+    apiContracts = [],
+    lexicon = loadBusinessLexicon(),
+    maxScenarios = 96,
+  } = options || {};
+
+  const scenarios = [];
+  const seen = new Set();
+
+  const push = (candidate) => {
+    if (scenarios.length >= maxScenarios) return;
+    const title = trimToLimit(candidate.title, 180);
+    if (!title) return;
+    const key = `${candidate.type}::${title}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    scenarios.push({
+      scenario_id: `scn-${String(scenarios.length + 1).padStart(3, '0')}`,
+      type: candidate.type,
+      title,
+      preconditions: ensureArray(candidate.preconditions).filter(Boolean).map(safeString).slice(0, 4),
+      steps: ensureArray(candidate.steps).filter(Boolean).map(safeString).slice(0, 6),
+      expected_outcome: candidate.expected_outcome ? safeString(candidate.expected_outcome) : null,
+      citations: ensureArray(candidate.citations).filter((c) => c && c.path),
+      domain_hint: candidate.domain_hint || null,
+      confidence: Number(candidate.confidence || 0.6),
+    });
+  };
+
+  for (const evidence of ensureArray(testEvidence)) {
+    if (!evidence || typeof evidence !== 'object') continue;
+    const description = safeString(evidence.description).trim();
+    if (!description) continue;
+    const preconditions = evidence.given ? [safeString(evidence.given)] : [];
+    const steps = evidence.when ? [safeString(evidence.when)] : [];
+    const expected = evidence.then ? safeString(evidence.then) : null;
+    push({
+      type: 'happy',
+      title: description,
+      preconditions,
+      steps,
+      expected_outcome: expected,
+      citations: evidence.citations,
+      domain_hint: evidence.domain_hint,
+      confidence: 0.75,
+    });
+  }
+
+  for (const record of ensureArray(commentRecords)) {
+    if (!record || typeof record !== 'object') continue;
+    const text = safeString(record.text).trim();
+    if (!text) continue;
+    if (!BRANCH_KEYWORD_REGEX.test(text)) continue;
+    if (isAntiPattern(text, lexicon)) continue;
+    const citation = { path: safeString(record.path) };
+    if (Number.isFinite(record.line_start)) citation.line_start = Number(record.line_start);
+    if (Number.isFinite(record.line_end)) citation.line_end = Number(record.line_end);
+    push({
+      type: 'branch',
+      title: text,
+      preconditions: [],
+      steps: [],
+      expected_outcome: null,
+      citations: citation.path ? [citation] : [],
+      domain_hint: classifyDomain(`${text} ${record.path || ''}`, lexicon),
+      confidence: 0.6,
+    });
+  }
+
+  for (const contract of ensureArray(apiContracts)) {
+    if (!contract || typeof contract !== 'object') continue;
+    const text = [contract.businessAction, contract.action, contract.summary, contract.description]
+      .map(safeString)
+      .filter(Boolean)
+      .join(' · ');
+    if (!text) continue;
+    if (!BRANCH_KEYWORD_REGEX.test(text)) continue;
+    push({
+      type: 'branch',
+      title: `${contract.method || ''} ${contract.path || ''} — ${text}`.trim(),
+      preconditions: [],
+      steps: [],
+      expected_outcome: null,
+      citations: contract.source ? [{ path: safeString(contract.source) }] : [],
+      domain_hint: classifyDomain(`${text} ${contract.path || ''}`, lexicon),
+      confidence: 0.55,
+    });
+  }
+
+  for (const throwRec of ensureArray(throwStatements)) {
+    if (!throwRec || typeof throwRec !== 'object') continue;
+    const exceptionType = safeString(throwRec.exception_type);
+    if (!exceptionType) continue;
+    const message = safeString(throwRec.message);
+    const title = message
+      ? `异常路径：${exceptionType} — ${message}`
+      : `异常路径：抛出 ${exceptionType}`;
+    const citation = { path: safeString(throwRec.path) };
+    if (Number.isFinite(throwRec.line_start)) citation.line_start = Number(throwRec.line_start);
+    if (Number.isFinite(throwRec.line_end)) citation.line_end = Number(throwRec.line_end);
+    push({
+      type: 'exception',
+      title,
+      preconditions: [],
+      steps: [],
+      expected_outcome: message || `${exceptionType} 被抛出`,
+      citations: citation.path ? [citation] : [],
+      domain_hint: classifyDomain(`${message} ${throwRec.path || ''}`, lexicon),
+      confidence: 0.75,
+    });
+  }
+
+  return scenarios;
+}
+
+// ---------------------------------------------------------------------------
+// Extractor 5: extractCalculations
+// ---------------------------------------------------------------------------
+//
+// 产出业务计算公式 + 边界约束：
+//   - 从 calculation_hints（BigDecimal / Math.* / 金额/时间关键词）
+//   - 从 rule_comments 里关联的边界文本（至少/至多/不得超过...）
+// ---------------------------------------------------------------------------
+
+const BOUNDARY_EXTRACT_REGEX = /(?:至少|不少于|不低于|大于等于|>=|最多|至多|不得超过|不超过|不大于|<=|大于|小于|>|<)\s*([0-9]+(?:\.[0-9]+)?[%a-zA-Z\u4e00-\u9fa5]*)/g;
+
+function extractCalculations(options) {
+  const {
+    calculationHints = [],
+    commentRecords = [],
+    lexicon = loadBusinessLexicon(),
+    maxCalculations = 48,
+  } = options || {};
+
+  const calculations = [];
+  const seen = new Set();
+
+  const push = (candidate) => {
+    if (calculations.length >= maxCalculations) return;
+    const formula = trimToLimit(candidate.formula_text, 200);
+    if (!formula) return;
+    const key = `${candidate.source_type}::${formula}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    calculations.push({
+      calc_id: `calc-${String(calculations.length + 1).padStart(3, '0')}`,
+      formula_text: formula,
+      keyword: candidate.keyword || null,
+      source_type: candidate.source_type,
+      boundaries: ensureArray(candidate.boundaries),
+      citations: ensureArray(candidate.citations).filter((c) => c && c.path),
+      domain_hint: candidate.domain_hint || null,
+      confidence: Number(candidate.confidence || 0.6),
+    });
+  };
+
+  for (const hint of ensureArray(calculationHints)) {
+    if (!hint || typeof hint !== 'object') continue;
+    const text = safeString(hint.text).trim();
+    if (!text) continue;
+    const citation = { path: safeString(hint.path) };
+    if (Number.isFinite(hint.line_start)) citation.line_start = Number(hint.line_start);
+    if (Number.isFinite(hint.line_end)) citation.line_end = Number(hint.line_end);
+    const boundaries = [];
+    let match;
+    BOUNDARY_EXTRACT_REGEX.lastIndex = 0;
+    while ((match = BOUNDARY_EXTRACT_REGEX.exec(text))) {
+      boundaries.push({ bound: match[0].trim(), value: match[1] });
+      if (boundaries.length > 4) break;
+    }
+    push({
+      formula_text: text,
+      keyword: safeString(hint.keyword || ''),
+      source_type: hint.source_type === 'comment' ? 'calculation_comment' : 'calculation_code',
+      boundaries,
+      citations: citation.path ? [citation] : [],
+      domain_hint: classifyDomain(`${text} ${hint.path || ''}`, lexicon),
+      confidence: hint.source_type === 'code' ? 0.7 : 0.6,
+    });
+  }
+
+  for (const record of ensureArray(commentRecords)) {
+    if (!record || typeof record !== 'object') continue;
+    const text = safeString(record.text).trim();
+    if (!text) continue;
+    const boundaries = [];
+    let match;
+    BOUNDARY_EXTRACT_REGEX.lastIndex = 0;
+    while ((match = BOUNDARY_EXTRACT_REGEX.exec(text))) {
+      boundaries.push({ bound: match[0].trim(), value: match[1] });
+      if (boundaries.length > 4) break;
+    }
+    if (!boundaries.length) continue;
+    const citation = { path: safeString(record.path) };
+    if (Number.isFinite(record.line_start)) citation.line_start = Number(record.line_start);
+    if (Number.isFinite(record.line_end)) citation.line_end = Number(record.line_end);
+    push({
+      formula_text: text,
+      keyword: null,
+      source_type: 'calculation_rule',
+      boundaries,
+      citations: citation.path ? [citation] : [],
+      domain_hint: classifyDomain(`${text} ${record.path || ''}`, lexicon),
+      confidence: 0.65,
+    });
+  }
+
+  return calculations;
+}
+
+// ---------------------------------------------------------------------------
+// Extractor 6: extractFailureModes
+// ---------------------------------------------------------------------------
+//
+// 失败模式 + 补偿动作：
+//   - trigger_condition: throw_statements 的 exception_type + message
+//   - compensation: exception_handlers (Retryable / CircuitBreaker / Fallback / ExceptionHandler / catch)
+//   - 通过文件路径归拢配对
+// ---------------------------------------------------------------------------
+
+function extractFailureModes(options) {
+  const {
+    throwStatements = [],
+    exceptionHandlers = [],
+    commentRecords = [],
+    lexicon = loadBusinessLexicon(),
+    maxModes = 64,
+  } = options || {};
+
+  const handlerIndex = new Map();
+  for (const handler of ensureArray(exceptionHandlers)) {
+    if (!handler || typeof handler !== 'object') continue;
+    const key = safeString(handler.exception_type || handler.arguments || handler.annotation);
+    const k2 = key.toLowerCase();
+    if (!handlerIndex.has(k2)) handlerIndex.set(k2, []);
+    handlerIndex.get(k2).push(handler);
+  }
+
+  const modes = [];
+  const seen = new Set();
+
+  const push = (candidate) => {
+    if (modes.length >= maxModes) return;
+    const condition = trimToLimit(candidate.trigger_condition, 220);
+    if (!condition) return;
+    const key = condition;
+    if (seen.has(key)) return;
+    seen.add(key);
+    modes.push({
+      failure_id: `fm-${String(modes.length + 1).padStart(3, '0')}`,
+      trigger_condition: condition,
+      exception_type: candidate.exception_type || null,
+      error_message: candidate.error_message || null,
+      compensation: ensureArray(candidate.compensation).filter(Boolean),
+      citations: ensureArray(candidate.citations).filter((c) => c && c.path),
+      domain_hint: candidate.domain_hint || null,
+      confidence: Number(candidate.confidence || 0.6),
+    });
+  };
+
+  for (const throwRec of ensureArray(throwStatements)) {
+    if (!throwRec || typeof throwRec !== 'object') continue;
+    const exceptionType = safeString(throwRec.exception_type);
+    if (!exceptionType) continue;
+    const message = safeString(throwRec.message);
+    const condition = message
+      ? `${exceptionType}: ${message}`
+      : `抛出 ${exceptionType}`;
+    const citation = { path: safeString(throwRec.path) };
+    if (Number.isFinite(throwRec.line_start)) citation.line_start = Number(throwRec.line_start);
+    if (Number.isFinite(throwRec.line_end)) citation.line_end = Number(throwRec.line_end);
+
+    const compensation = [];
+    const directHandlers = handlerIndex.get(exceptionType.toLowerCase()) || [];
+    for (const handler of directHandlers.slice(0, 3)) {
+      const label = handler.annotation
+        ? `@${handler.annotation}${handler.arguments ? `(${handler.arguments})` : ''}`
+        : handler.kind === 'catch'
+          ? `catch(${handler.exception_type})`
+          : 'handler';
+      const handlerCite = { path: safeString(handler.path) };
+      if (Number.isFinite(handler.line_start)) handlerCite.line_start = Number(handler.line_start);
+      if (Number.isFinite(handler.line_end)) handlerCite.line_end = Number(handler.line_end);
+      compensation.push({ kind: handler.kind || 'handler', text: label, citation: handlerCite.path ? handlerCite : null });
+    }
+
+    push({
+      trigger_condition: condition,
+      exception_type: exceptionType,
+      error_message: message || null,
+      compensation,
+      citations: citation.path ? [citation] : [],
+      domain_hint: classifyDomain(`${message} ${throwRec.path || ''}`, lexicon),
+      confidence: 0.75,
+    });
+  }
+
+  for (const handler of ensureArray(exceptionHandlers)) {
+    if (!handler || typeof handler !== 'object') continue;
+    if (handler.kind !== 'resilience') continue;
+    const annotation = safeString(handler.annotation);
+    if (!annotation) continue;
+    const condition = `Resilience: @${annotation}${handler.arguments ? `(${handler.arguments})` : ''}`;
+    const citation = { path: safeString(handler.path) };
+    if (Number.isFinite(handler.line_start)) citation.line_start = Number(handler.line_start);
+    if (Number.isFinite(handler.line_end)) citation.line_end = Number(handler.line_end);
+    push({
+      trigger_condition: condition,
+      exception_type: null,
+      error_message: null,
+      compensation: [{ kind: 'resilience', text: `@${annotation}`, citation: citation.path ? citation : null }],
+      citations: citation.path ? [citation] : [],
+      domain_hint: null,
+      confidence: 0.55,
+    });
+  }
+
+  for (const record of ensureArray(commentRecords)) {
+    if (!record || typeof record !== 'object') continue;
+    const text = safeString(record.text);
+    if (!text) continue;
+    if (!/异常|失败|错误|fallback|compensation|补偿|回滚|rollback|重试|retry/i.test(text)) continue;
+    if (!containsStrongRuleTrigger(text, lexicon)) continue;
+    const citation = { path: safeString(record.path) };
+    if (Number.isFinite(record.line_start)) citation.line_start = Number(record.line_start);
+    if (Number.isFinite(record.line_end)) citation.line_end = Number(record.line_end);
+    push({
+      trigger_condition: text,
+      exception_type: null,
+      error_message: null,
+      compensation: [],
+      citations: citation.path ? [citation] : [],
+      domain_hint: classifyDomain(`${text} ${record.path || ''}`, lexicon),
+      confidence: 0.5,
+    });
+  }
+
+  return modes;
+}
+
+// ---------------------------------------------------------------------------
+// Extractor 7: extractInvariants
+// ---------------------------------------------------------------------------
+//
+// 不变量约束：
+//   - validation_annotations: @NotNull / @Size / @Min / @Max / …
+//   - assertion_statements:   Preconditions.check* / Assert.* / Objects.requireNonNull / UNIQUE
+//   - erModel.columns[notNull=true] 作为数据层不变量
+// ---------------------------------------------------------------------------
+
+function extractInvariants(options) {
+  const {
+    validationAnnotations = [],
+    assertionStatements = [],
+    erModel = [],
+    lexicon = loadBusinessLexicon(),
+    maxInvariants = 96,
+  } = options || {};
+
+  const invariants = [];
+  const seen = new Set();
+
+  const push = (candidate) => {
+    if (invariants.length >= maxInvariants) return;
+    const condition = trimToLimit(candidate.condition, 220);
+    if (!condition) return;
+    const key = `${candidate.source_type}::${condition}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    invariants.push({
+      invariant_id: `inv-${String(invariants.length + 1).padStart(3, '0')}`,
+      condition,
+      scope: candidate.scope || null,
+      source_type: candidate.source_type,
+      citations: ensureArray(candidate.citations).filter((c) => c && c.path),
+      domain_hint: candidate.domain_hint || null,
+      confidence: Number(candidate.confidence || 0.7),
+    });
+  };
+
+  for (const annotation of ensureArray(validationAnnotations)) {
+    if (!annotation || typeof annotation !== 'object') continue;
+    const name = safeString(annotation.annotation);
+    if (!name) continue;
+    const args = safeString(annotation.arguments);
+    const condition = args ? `@${name}(${args})` : `@${name}`;
+    const citation = { path: safeString(annotation.path) };
+    if (Number.isFinite(annotation.line_start)) citation.line_start = Number(annotation.line_start);
+    if (Number.isFinite(annotation.line_end)) citation.line_end = Number(annotation.line_end);
+    push({
+      condition,
+      scope: 'field_validation',
+      source_type: 'validation_annotation',
+      citations: citation.path ? [citation] : [],
+      domain_hint: classifyDomain(`${condition} ${annotation.path || ''}`, lexicon),
+      confidence: 0.8,
+    });
+  }
+
+  for (const stmt of ensureArray(assertionStatements)) {
+    if (!stmt || typeof stmt !== 'object') continue;
+    const call = safeString(stmt.assertion);
+    if (!call) continue;
+    const args = safeString(stmt.arguments);
+    const condition = args ? `${call}(${args})` : call;
+    const citation = { path: safeString(stmt.path) };
+    if (Number.isFinite(stmt.line_start)) citation.line_start = Number(stmt.line_start);
+    if (Number.isFinite(stmt.line_end)) citation.line_end = Number(stmt.line_end);
+    const scope = stmt.source_type === 'sql_unique'
+      ? 'database_unique'
+      : stmt.source_type === 'inline_assert'
+        ? 'runtime_assert'
+        : 'guard_call';
+    push({
+      condition,
+      scope,
+      source_type: stmt.source_type || 'assertion',
+      citations: citation.path ? [citation] : [],
+      domain_hint: classifyDomain(`${condition} ${stmt.path || ''}`, lexicon),
+      confidence: stmt.source_type === 'sql_unique' ? 0.85 : 0.75,
+    });
+  }
+
+  for (const table of ensureArray(erModel)) {
+    if (!table || typeof table !== 'object') continue;
+    for (const col of ensureArray(table.columns)) {
+      if (!col || typeof col !== 'object') continue;
+      if (!col.notNull && !col.primary && !col.unique) continue;
+      const tableName = safeString(table.table);
+      const colName = safeString(col.name);
+      if (!tableName || !colName) continue;
+      const flags = [];
+      if (col.notNull) flags.push('NOT NULL');
+      if (col.primary) flags.push('PRIMARY KEY');
+      if (col.unique) flags.push('UNIQUE');
+      const condition = `${tableName}.${colName} ${flags.join(' / ')}`;
+      const citation = { path: safeString(table.path) };
+      push({
+        condition,
+        scope: 'database_schema',
+        source_type: 'er_column',
+        citations: citation.path ? [citation] : [],
+        domain_hint: classifyDomain(`${condition}`, lexicon),
+        confidence: 0.8,
+      });
+    }
+  }
+
+  return invariants;
 }
 
 module.exports = {
@@ -559,4 +1094,8 @@ module.exports = {
   extractRulesFromComments,
   extractRulesFromTestNames,
   upgradeStateMachinesWithGuards,
+  extractScenarios,
+  extractCalculations,
+  extractFailureModes,
+  extractInvariants,
 };

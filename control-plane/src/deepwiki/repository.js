@@ -773,6 +773,7 @@ function collectRepositoryInventory(repoPath) {
 
   const ruleComments = collectRuleCommentRecords(readableFiles);
   const testMethods = collectTestMethodRecords(readableFiles);
+  const businessSignals = collectBusinessLogicSignals(readableFiles);
 
   const categorizedModules = Array.from(moduleBuckets.entries())
     .map(([name, files]) => {
@@ -1060,6 +1061,11 @@ function collectRepositoryInventory(repoPath) {
     tables: tableNames,
     rule_comments: ruleComments,
     test_methods: testMethods,
+    throw_statements: businessSignals.throwStatements,
+    exception_handlers: businessSignals.exceptionHandlers,
+    validation_annotations: businessSignals.validationAnnotations,
+    assertion_statements: businessSignals.assertionStatements,
+    calculation_hints: businessSignals.calculationHints,
     sample_tree: allFiles.slice(0, 200),
   };
 }
@@ -1170,6 +1176,226 @@ function collectTestMethodRecords(readableFiles) {
   return records;
 }
 
+const THROW_STATEMENT_REGEX = /\bthrow\s+new\s+([A-Z][A-Za-z0-9_]*(?:Exception|Error|Fault))\s*\(\s*(?:"([^"\n]{0,220})"|([A-Za-z0-9_.]+))?/g;
+const EXCEPTION_HANDLER_ANNOTATION_REGEX = /@(ExceptionHandler|ControllerAdvice|RestControllerAdvice|Retryable|Recover|CircuitBreaker|Fallback|Transactional)\b(?:\s*\(\s*([^)\n]{0,200})\))?/g;
+const CATCH_CLAUSE_REGEX = /\bcatch\s*\(\s*([A-Z][A-Za-z0-9_]*(?:Exception|Error|Throwable))\s+[A-Za-z_][A-Za-z0-9_]*\s*\)/g;
+const VALIDATION_ANNOTATION_REGEX = /@(NotNull|NotBlank|NotEmpty|Size|Min|Max|Pattern|Email|Valid|DecimalMin|DecimalMax|Positive|PositiveOrZero|Negative|NegativeOrZero|Digits|Past|Future|Length|Range|AssertTrue|AssertFalse)\b(?:\s*\(\s*([^)\n]{0,200})\))?/g;
+const ASSERTION_REGEX = /\b(Preconditions\.(?:checkArgument|checkState|checkNotNull|checkPositionIndex|checkElementIndex)|Assert\.(?:isTrue|notNull|notEmpty|hasText|isInstanceOf|state)|Objects\.requireNonNull|Validate\.(?:notNull|notEmpty|notBlank|isTrue))\s*\(\s*([^;\n]{0,200})/g;
+const INLINE_ASSERT_REGEX = /^\s*assert\s+([^;\n]{1,200});/gm;
+const CALCULATION_KEYWORD_REGEX = /\b(BigDecimal|RoundingMode|Math\.(?:abs|max|min|round|floor|ceil|pow|sqrt|log)|LocalDate(?:Time)?\.plus|Duration\.between|ChronoUnit\.|Money\.|MonetaryAmount|Percentage)\b/;
+const CALCULATION_COMMENT_REGEX = /计算|公式|费率|汇率|税率|折扣|利率|\bformula\b|\brate\b|\bdiscount\b|\btax\b|\binterest\b/i;
+const UNIQUE_CONSTRAINT_REGEX = /\b(?:UNIQUE\s+KEY|CONSTRAINT\s+\w+\s+UNIQUE|@Column\s*\(\s*[^)]*unique\s*=\s*true|@Unique)\b/i;
+
+const BUSINESS_SIGNAL_SOURCE_EXTS = ['.java', '.kt', '.scala', '.groovy'];
+const BUSINESS_SIGNAL_SQL_EXTS = ['.sql'];
+
+function pushIfBounded(records, record, cap) {
+  if (records.length >= cap) return false;
+  records.push(record);
+  return true;
+}
+
+function lineOfIndex(preview, index) {
+  if (typeof index !== 'number' || index < 0) return 1;
+  return preview.slice(0, index).split(/\r?\n/).length;
+}
+
+function collectBusinessLogicSignals(readableFiles) {
+  const throwStatements = [];
+  const exceptionHandlers = [];
+  const validationAnnotations = [];
+  const assertionStatements = [];
+  const calculationHints = [];
+  const CAP_PER_KIND = 240;
+
+  for (const file of readableFiles) {
+    const ext = path.extname(file.path).toLowerCase();
+    const preview = typeof file.preview === 'string' ? file.preview : '';
+    if (!preview) continue;
+
+    if (BUSINESS_SIGNAL_SOURCE_EXTS.includes(ext)) {
+      // throw new X("msg")
+      let match;
+      THROW_STATEMENT_REGEX.lastIndex = 0;
+      while ((match = THROW_STATEMENT_REGEX.exec(preview))) {
+        const exceptionType = match[1];
+        const literal = match[2];
+        const reference = match[3];
+        const line = lineOfIndex(preview, match.index);
+        if (!pushIfBounded(
+          throwStatements,
+          {
+            path: file.path,
+            line_start: line,
+            line_end: line,
+            exception_type: exceptionType,
+            message: literal || (reference ? `arg:${reference}` : null),
+          },
+          CAP_PER_KIND,
+        )) break;
+      }
+
+      // annotation-based handlers
+      EXCEPTION_HANDLER_ANNOTATION_REGEX.lastIndex = 0;
+      while ((match = EXCEPTION_HANDLER_ANNOTATION_REGEX.exec(preview))) {
+        const annotation = match[1];
+        const args = match[2] ? match[2].trim() : '';
+        const line = lineOfIndex(preview, match.index);
+        if (!pushIfBounded(
+          exceptionHandlers,
+          {
+            path: file.path,
+            line_start: line,
+            line_end: line,
+            annotation,
+            arguments: args || null,
+            kind: annotation === 'Retryable' || annotation === 'Recover' || annotation === 'CircuitBreaker' || annotation === 'Fallback'
+              ? 'resilience'
+              : annotation === 'Transactional'
+                ? 'transaction'
+                : 'handler',
+          },
+          CAP_PER_KIND,
+        )) break;
+      }
+
+      // catch (XException)
+      CATCH_CLAUSE_REGEX.lastIndex = 0;
+      while ((match = CATCH_CLAUSE_REGEX.exec(preview))) {
+        const exceptionType = match[1];
+        const line = lineOfIndex(preview, match.index);
+        if (!pushIfBounded(
+          exceptionHandlers,
+          {
+            path: file.path,
+            line_start: line,
+            line_end: line,
+            annotation: null,
+            exception_type: exceptionType,
+            kind: 'catch',
+          },
+          CAP_PER_KIND,
+        )) break;
+      }
+
+      // @NotNull / @Size etc.
+      VALIDATION_ANNOTATION_REGEX.lastIndex = 0;
+      while ((match = VALIDATION_ANNOTATION_REGEX.exec(preview))) {
+        const annotation = match[1];
+        const args = match[2] ? match[2].trim() : '';
+        const line = lineOfIndex(preview, match.index);
+        if (!pushIfBounded(
+          validationAnnotations,
+          {
+            path: file.path,
+            line_start: line,
+            line_end: line,
+            annotation,
+            arguments: args || null,
+          },
+          CAP_PER_KIND,
+        )) break;
+      }
+
+      // Preconditions/Assert/Validate/Objects.requireNonNull
+      ASSERTION_REGEX.lastIndex = 0;
+      while ((match = ASSERTION_REGEX.exec(preview))) {
+        const call = match[1];
+        const args = (match[2] || '').trim();
+        const line = lineOfIndex(preview, match.index);
+        if (!pushIfBounded(
+          assertionStatements,
+          {
+            path: file.path,
+            line_start: line,
+            line_end: line,
+            assertion: call,
+            arguments: args ? args.slice(0, 200) : null,
+            source_type: 'guard_call',
+          },
+          CAP_PER_KIND,
+        )) break;
+      }
+
+      // inline `assert foo != null;`
+      INLINE_ASSERT_REGEX.lastIndex = 0;
+      while ((match = INLINE_ASSERT_REGEX.exec(preview))) {
+        const args = (match[1] || '').trim();
+        if (!args) continue;
+        const line = lineOfIndex(preview, match.index);
+        if (!pushIfBounded(
+          assertionStatements,
+          {
+            path: file.path,
+            line_start: line,
+            line_end: line,
+            assertion: 'assert',
+            arguments: args.slice(0, 200),
+            source_type: 'inline_assert',
+          },
+          CAP_PER_KIND,
+        )) break;
+      }
+
+      // calculation hints — scan line by line
+      const lines = preview.split(/\r?\n/);
+      for (let i = 0; i < lines.length; i += 1) {
+        const raw = lines[i];
+        if (!raw) continue;
+        const trimmed = raw.trim();
+        if (trimmed.length > 400) continue;
+        const kwMatch = trimmed.match(CALCULATION_KEYWORD_REGEX);
+        const commentHit = extractCommentText(raw, ext);
+        const commentMatch = commentHit ? CALCULATION_COMMENT_REGEX.test(commentHit) : false;
+        if (!kwMatch && !commentMatch) continue;
+        pushIfBounded(
+          calculationHints,
+          {
+            path: file.path,
+            line_start: i + 1,
+            line_end: i + 1,
+            text: trimmed.slice(0, 220),
+            keyword: kwMatch ? kwMatch[1] : null,
+            source_type: commentMatch ? 'comment' : 'code',
+          },
+          CAP_PER_KIND,
+        );
+        if (calculationHints.length >= CAP_PER_KIND) break;
+      }
+    }
+
+    if (BUSINESS_SIGNAL_SQL_EXTS.includes(ext)) {
+      // UNIQUE constraints in SQL → invariant candidates
+      const lines = preview.split(/\r?\n/);
+      for (let i = 0; i < lines.length; i += 1) {
+        const raw = lines[i];
+        if (!UNIQUE_CONSTRAINT_REGEX.test(raw)) continue;
+        pushIfBounded(
+          assertionStatements,
+          {
+            path: file.path,
+            line_start: i + 1,
+            line_end: i + 1,
+            assertion: 'UNIQUE',
+            arguments: raw.trim().slice(0, 200),
+            source_type: 'sql_unique',
+          },
+          CAP_PER_KIND,
+        );
+        if (assertionStatements.length >= CAP_PER_KIND) break;
+      }
+    }
+  }
+
+  return {
+    throwStatements,
+    exceptionHandlers,
+    validationAnnotations,
+    assertionStatements,
+    calculationHints,
+  };
+}
+
 function prefixInventoryPaths(inventory, prefix) {
   const prefixPath = (value) => {
     const normalized = String(value || '').trim();
@@ -1245,6 +1471,11 @@ function prefixInventoryPaths(inventory, prefix) {
     sql_tables: prefixObjectArray(inventory.sql_tables),
     rule_comments: prefixObjectArray(inventory.rule_comments),
     test_methods: prefixObjectArray(inventory.test_methods),
+    throw_statements: prefixObjectArray(inventory.throw_statements),
+    exception_handlers: prefixObjectArray(inventory.exception_handlers),
+    validation_annotations: prefixObjectArray(inventory.validation_annotations),
+    assertion_statements: prefixObjectArray(inventory.assertion_statements),
+    calculation_hints: prefixObjectArray(inventory.calculation_hints),
   };
 }
 
@@ -1358,6 +1589,26 @@ function collectProjectManifestInventory(repoUnits = []) {
       inventories.flatMap((item) => item.test_methods || []),
       (item) => `${item.path}:${item.name || ''}:${item.line_start || ''}`
     ).slice(0, 200),
+    throw_statements: mergeUniqueObjects(
+      inventories.flatMap((item) => item.throw_statements || []),
+      (item) => `${item.path}:${item.line_start || ''}:${item.exception_type || ''}`
+    ).slice(0, 240),
+    exception_handlers: mergeUniqueObjects(
+      inventories.flatMap((item) => item.exception_handlers || []),
+      (item) => `${item.path}:${item.line_start || ''}:${item.annotation || ''}:${item.exception_type || ''}:${item.kind || ''}`
+    ).slice(0, 240),
+    validation_annotations: mergeUniqueObjects(
+      inventories.flatMap((item) => item.validation_annotations || []),
+      (item) => `${item.path}:${item.line_start || ''}:${item.annotation || ''}`
+    ).slice(0, 240),
+    assertion_statements: mergeUniqueObjects(
+      inventories.flatMap((item) => item.assertion_statements || []),
+      (item) => `${item.path}:${item.line_start || ''}:${item.assertion || ''}`
+    ).slice(0, 240),
+    calculation_hints: mergeUniqueObjects(
+      inventories.flatMap((item) => item.calculation_hints || []),
+      (item) => `${item.path}:${item.line_start || ''}:${item.keyword || ''}:${(item.text || '').slice(0, 40)}`
+    ).slice(0, 240),
     api_endpoints: uniqueBy(inventories.flatMap((item) => item.api_endpoints || []), (item) => item).slice(0, 80),
     deploy_files: uniqueBy(inventories.flatMap((item) => item.deploy_files || []), (item) => item).slice(0, 40),
     tables: uniqueBy(inventories.flatMap((item) => item.tables || []), (item) => item).slice(0, 80),

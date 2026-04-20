@@ -6,6 +6,10 @@ const {
   extractRulesFromComments,
   extractRulesFromTestNames,
   upgradeStateMachinesWithGuards,
+  extractScenarios,
+  extractCalculations,
+  extractFailureModes,
+  extractInvariants,
 } = require('../src/deepwiki/business-logic-mining');
 const { loadBusinessLexicon } = require('../src/deepwiki/business-lexicon');
 const {
@@ -325,4 +329,315 @@ test('buildInventoryEnforcerContext aggregates inventory paths into allowlist', 
 test('renderBusinessLogicPage returns null when no signals exist', () => {
   const empty = renderBusinessLogicPage({ business_rules: [], test_evidence: [], state_machines_with_guards: [] });
   assert.equal(empty, null);
+});
+
+test('extractScenarios produces happy/branch/exception from tests + comments + throws', () => {
+  const lexicon = loadBusinessLexicon();
+  const testEvidence = [
+    {
+      description: 'should reject order when amount is negative',
+      given: 'amount is negative',
+      when: 'creating an order',
+      then: 'reject is thrown',
+      citations: [
+        { path: 'src/test/java/order/OrderServiceTest.java', line_start: 30, line_end: 30 },
+      ],
+    },
+  ];
+  const throwStatements = [
+    {
+      path: 'src/main/java/order/OrderService.java',
+      line_start: 55,
+      line_end: 55,
+      exception_type: 'IllegalArgumentException',
+      message: 'amount must be > 0',
+    },
+  ];
+  const commentRecords = [
+    {
+      text: '如果余额不足则拒绝支付，否则扣款',
+      path: 'src/main/java/order/PayService.java',
+      line_start: 80,
+      line_end: 80,
+      source_type: 'code_comment',
+    },
+  ];
+  const scenarios = extractScenarios({ testEvidence, throwStatements, commentRecords, lexicon });
+  assert.ok(scenarios.length >= 3, `expected 3+, got ${scenarios.length}`);
+  assert.ok(scenarios.some((s) => s.type === 'happy'));
+  assert.ok(scenarios.some((s) => s.type === 'branch'));
+  assert.ok(scenarios.some((s) => s.type === 'exception'));
+  const exc = scenarios.find((s) => s.type === 'exception');
+  assert.ok(Array.isArray(exc.citations) && exc.citations.length >= 1);
+  assert.equal(exc.citations[0].line_start, 55);
+});
+
+test('extractCalculations captures code + comment hints with boundaries', () => {
+  const lexicon = loadBusinessLexicon();
+  const calculationHints = [
+    {
+      path: 'src/main/java/fee/FeeCalculator.java',
+      line_start: 20,
+      line_end: 20,
+      text: 'BigDecimal fee = amount.multiply(rate);',
+      keyword: 'BigDecimal',
+      source_type: 'code',
+    },
+    {
+      path: 'src/main/java/fee/FeeCalculator.java',
+      line_start: 5,
+      line_end: 5,
+      text: '// 费率计算：按月计息，最低 0.5% 最高 5%',
+      keyword: null,
+      source_type: 'comment',
+    },
+  ];
+  const commentRecords = [
+    {
+      text: '订单金额不得超过 10000 元且不少于 1 元',
+      path: 'src/main/java/order/OrderRule.java',
+      line_start: 12,
+      line_end: 12,
+      source_type: 'code_comment',
+    },
+  ];
+  const calculations = extractCalculations({ calculationHints, commentRecords, lexicon });
+  assert.ok(calculations.length >= 2);
+  const code = calculations.find((c) => c.source_type === 'calculation_code');
+  assert.ok(code, 'code hint should be captured');
+  assert.equal(code.keyword, 'BigDecimal');
+  assert.equal(code.citations[0].path, 'src/main/java/fee/FeeCalculator.java');
+  const ruleCalc = calculations.find((c) => c.source_type === 'calculation_rule');
+  assert.ok(ruleCalc, 'rule-derived boundary should be captured');
+  assert.ok(Array.isArray(ruleCalc.boundaries) && ruleCalc.boundaries.length >= 1);
+});
+
+test('extractFailureModes pairs throws with resilience handlers', () => {
+  const lexicon = loadBusinessLexicon();
+  const throwStatements = [
+    {
+      path: 'src/main/java/pay/PayService.java',
+      line_start: 60,
+      line_end: 60,
+      exception_type: 'PaymentDeclinedException',
+      message: 'card declined',
+    },
+  ];
+  const exceptionHandlers = [
+    {
+      path: 'src/main/java/pay/PayService.java',
+      line_start: 40,
+      line_end: 40,
+      annotation: 'Retryable',
+      arguments: 'value=PaymentDeclinedException.class',
+      kind: 'resilience',
+    },
+    {
+      path: 'src/main/java/pay/ExceptionAdvice.java',
+      line_start: 10,
+      line_end: 10,
+      annotation: 'ExceptionHandler',
+      exception_type: 'PaymentDeclinedException',
+      arguments: 'PaymentDeclinedException.class',
+      kind: 'handler',
+    },
+  ];
+  const modes = extractFailureModes({ throwStatements, exceptionHandlers, commentRecords: [], lexicon });
+  assert.ok(modes.length >= 1);
+  const fm = modes.find((m) => m.exception_type === 'PaymentDeclinedException');
+  assert.ok(fm, 'failure mode for PaymentDeclinedException should exist');
+  assert.ok(Array.isArray(fm.compensation) && fm.compensation.length >= 1);
+  assert.ok(fm.citations[0].line_start === 60);
+});
+
+test('extractInvariants aggregates validation annotations + assertions + ER UNIQUE', () => {
+  const lexicon = loadBusinessLexicon();
+  const validationAnnotations = [
+    {
+      path: 'src/main/java/user/UserCreateRequest.java',
+      line_start: 18,
+      line_end: 18,
+      annotation: 'NotBlank',
+      arguments: null,
+    },
+    {
+      path: 'src/main/java/user/UserCreateRequest.java',
+      line_start: 22,
+      line_end: 22,
+      annotation: 'Size',
+      arguments: 'min=6, max=20',
+    },
+  ];
+  const assertionStatements = [
+    {
+      path: 'src/main/java/user/UserService.java',
+      line_start: 45,
+      line_end: 45,
+      assertion: 'Objects.requireNonNull',
+      arguments: 'user, "user must not be null"',
+      source_type: 'guard_call',
+    },
+    {
+      path: 'db/schema.sql',
+      line_start: 8,
+      line_end: 8,
+      assertion: 'UNIQUE',
+      arguments: 'UNIQUE KEY uk_user_email (email)',
+      source_type: 'sql_unique',
+    },
+  ];
+  const erModel = [
+    {
+      table: 'orders',
+      path: 'db/schema.sql',
+      columns: [
+        { name: 'id', primary: true, notNull: true },
+        { name: 'amount', notNull: true },
+      ],
+    },
+  ];
+  const invariants = extractInvariants({ validationAnnotations, assertionStatements, erModel, lexicon });
+  assert.ok(invariants.length >= 4);
+  assert.ok(invariants.some((i) => i.scope === 'field_validation' && /@NotBlank/.test(i.condition)));
+  assert.ok(invariants.some((i) => i.scope === 'database_unique'));
+  assert.ok(invariants.some((i) => i.scope === 'guard_call'));
+  assert.ok(invariants.some((i) => i.scope === 'database_schema' && /orders\.id/.test(i.condition)));
+});
+
+test('renderBusinessLogicPage renders all four new sections when assets provided', () => {
+  const page = renderBusinessLogicPage({
+    business_rules: [],
+    test_evidence: [],
+    state_machines_with_guards: [],
+    scenarios: [
+      {
+        scenario_id: 'scn-001',
+        type: 'happy',
+        title: 'happy path for create order',
+        preconditions: ['user logged in'],
+        steps: ['POST /orders'],
+        expected_outcome: 'order created',
+        citations: [{ path: 'src/test/OrderTest.java', line_start: 10, line_end: 10 }],
+        confidence: 0.7,
+      },
+      {
+        scenario_id: 'scn-002',
+        type: 'exception',
+        title: '异常路径：IllegalArgumentException — amount must be > 0',
+        preconditions: [],
+        steps: [],
+        expected_outcome: 'IllegalArgumentException 被抛出',
+        citations: [{ path: 'src/main/java/Order.java', line_start: 55, line_end: 55 }],
+        confidence: 0.75,
+      },
+    ],
+    calculations: [
+      {
+        calc_id: 'calc-001',
+        formula_text: 'BigDecimal fee = amount.multiply(rate);',
+        keyword: 'BigDecimal',
+        source_type: 'calculation_code',
+        boundaries: [],
+        citations: [{ path: 'src/main/java/Fee.java', line_start: 20, line_end: 20 }],
+        confidence: 0.7,
+      },
+    ],
+    failure_modes: [
+      {
+        failure_id: 'fm-001',
+        trigger_condition: 'PaymentDeclinedException: card declined',
+        exception_type: 'PaymentDeclinedException',
+        error_message: 'card declined',
+        compensation: [
+          { kind: 'resilience', text: '@Retryable', citation: { path: 'src/main/java/Pay.java', line_start: 40, line_end: 40 } },
+        ],
+        citations: [{ path: 'src/main/java/Pay.java', line_start: 60, line_end: 60 }],
+        confidence: 0.75,
+      },
+    ],
+    invariants: [
+      {
+        invariant_id: 'inv-001',
+        condition: '@NotBlank',
+        scope: 'field_validation',
+        source_type: 'validation_annotation',
+        citations: [{ path: 'src/main/java/User.java', line_start: 18, line_end: 18 }],
+        confidence: 0.8,
+      },
+    ],
+    summary: {},
+  });
+  assert.ok(page, 'page should render');
+  assert.ok(/业务场景/.test(page.content));
+  assert.ok(/关键计算与边界/.test(page.content));
+  assert.ok(/失败模式与补偿/.test(page.content));
+  assert.ok(/不变量与约束/.test(page.content));
+  assert.ok(/BigDecimal/.test(page.content));
+  assert.ok(/PaymentDeclinedException/.test(page.content));
+  assert.ok(/@NotBlank/.test(page.content));
+  assert.equal(page.metadata_json.scenario_count, 2);
+  assert.equal(page.metadata_json.calculation_count, 1);
+  assert.equal(page.metadata_json.failure_mode_count, 1);
+  assert.equal(page.metadata_json.invariant_count, 1);
+});
+
+test('buildBusinessLogicFromInventory wires 5 new inventory collections through to assets', () => {
+  const inventory = {
+    repo_slug: 'demo',
+    rule_comments: [],
+    test_methods: [],
+    throw_statements: [
+      {
+        path: 'src/main/java/order/OrderService.java',
+        line_start: 55,
+        line_end: 55,
+        exception_type: 'IllegalArgumentException',
+        message: 'amount must be > 0',
+      },
+    ],
+    exception_handlers: [
+      {
+        path: 'src/main/java/order/OrderService.java',
+        line_start: 10,
+        line_end: 10,
+        annotation: 'Retryable',
+        kind: 'resilience',
+        arguments: null,
+      },
+    ],
+    validation_annotations: [
+      {
+        path: 'src/main/java/order/OrderRequest.java',
+        line_start: 12,
+        line_end: 12,
+        annotation: 'NotNull',
+        arguments: null,
+      },
+    ],
+    assertion_statements: [
+      {
+        path: 'src/main/java/order/OrderService.java',
+        line_start: 40,
+        line_end: 40,
+        assertion: 'Objects.requireNonNull',
+        arguments: 'request',
+        source_type: 'guard_call',
+      },
+    ],
+    calculation_hints: [
+      {
+        path: 'src/main/java/fee/FeeCalculator.java',
+        line_start: 20,
+        line_end: 20,
+        text: 'BigDecimal fee = amount.multiply(rate);',
+        keyword: 'BigDecimal',
+        source_type: 'code',
+      },
+    ],
+  };
+  const assets = buildBusinessLogicFromInventory(inventory);
+  assert.ok(assets.scenarios.length >= 1, 'scenarios should be extracted from throws');
+  assert.ok(assets.calculations.length >= 1);
+  assert.ok(assets.failure_modes.length >= 1);
+  assert.ok(assets.invariants.length >= 2);
 });

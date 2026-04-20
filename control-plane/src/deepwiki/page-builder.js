@@ -910,20 +910,45 @@ function createBuildDeepWikiPages(deps = {}) {
 }
 
 function buildBusinessLogicFromInventory(inventory) {
+  const emptyAssets = {
+    business_rules: [],
+    test_evidence: [],
+    state_machines_with_guards: [],
+    scenarios: [],
+    calculations: [],
+    failure_modes: [],
+    invariants: [],
+    summary: {},
+  };
   if (!inventory || typeof inventory !== 'object') {
-    return { business_rules: [], test_evidence: [], state_machines_with_guards: [], summary: {} };
+    return emptyAssets;
   }
   const ruleComments = Array.isArray(inventory.rule_comments) ? inventory.rule_comments : [];
   const testMethods = Array.isArray(inventory.test_methods) ? inventory.test_methods : [];
-  if (!ruleComments.length && !testMethods.length) {
-    return { business_rules: [], test_evidence: [], state_machines_with_guards: [], summary: {} };
-  }
+  const throwStatements = Array.isArray(inventory.throw_statements) ? inventory.throw_statements : [];
+  const exceptionHandlers = Array.isArray(inventory.exception_handlers) ? inventory.exception_handlers : [];
+  const validationAnnotations = Array.isArray(inventory.validation_annotations) ? inventory.validation_annotations : [];
+  const assertionStatements = Array.isArray(inventory.assertion_statements) ? inventory.assertion_statements : [];
+  const calculationHints = Array.isArray(inventory.calculation_hints) ? inventory.calculation_hints : [];
+  const hasAny = ruleComments.length
+    || testMethods.length
+    || throwStatements.length
+    || exceptionHandlers.length
+    || validationAnnotations.length
+    || assertionStatements.length
+    || calculationHints.length;
+  if (!hasAny) return emptyAssets;
   const topology = {
     repos: [
       {
         repo_slug: inventory.repo_slug || 'current',
         commentRecords: ruleComments,
         testMethods,
+        throwStatements,
+        exceptionHandlers,
+        validationAnnotations,
+        assertionStatements,
+        calculationHints,
       },
     ],
   };
@@ -937,7 +962,7 @@ function buildBusinessLogicFromInventory(inventory) {
       lexicon,
     });
   } catch (err) {
-    return { business_rules: [], test_evidence: [], state_machines_with_guards: [], summary: { error: String(err && err.message || err) } };
+    return { ...emptyAssets, summary: { error: String(err && err.message || err) } };
   }
 }
 
@@ -969,6 +994,11 @@ function buildInventoryEnforcerContext(inventory) {
   pushAll(inventory.sql_tables);
   pushAll(inventory.rule_comments);
   pushAll(inventory.test_methods);
+  pushAll(inventory.throw_statements);
+  pushAll(inventory.exception_handlers);
+  pushAll(inventory.validation_annotations);
+  pushAll(inventory.assertion_statements);
+  pushAll(inventory.calculation_hints);
   pushAll(inventory.docs);
   pushAll(inventory.frontend_pages);
   pushAll(inventory.test_files);
@@ -1014,8 +1044,21 @@ function renderBusinessLogicPage(assets, options = {}) {
   const rulesInput = Array.isArray(assets.business_rules) ? assets.business_rules : [];
   const testEvidenceInput = Array.isArray(assets.test_evidence) ? assets.test_evidence : [];
   const stateMachinesInput = Array.isArray(assets.state_machines_with_guards) ? assets.state_machines_with_guards : [];
+  const scenariosInput = Array.isArray(assets.scenarios) ? assets.scenarios : [];
+  const calculationsInput = Array.isArray(assets.calculations) ? assets.calculations : [];
+  const failureModesInput = Array.isArray(assets.failure_modes) ? assets.failure_modes : [];
+  const invariantsInput = Array.isArray(assets.invariants) ? assets.invariants : [];
 
-  const manifest = { dropped_rules: 0, dropped_tests: 0, dropped_transitions: 0, downgraded: 0 };
+  const manifest = {
+    dropped_rules: 0,
+    dropped_tests: 0,
+    dropped_transitions: 0,
+    dropped_scenarios: 0,
+    dropped_calculations: 0,
+    dropped_failure_modes: 0,
+    dropped_invariants: 0,
+    downgraded: 0,
+  };
 
   const filterRecord = (record) => {
     const accepted = filterCitations(record.citations, ctx);
@@ -1056,7 +1099,59 @@ function renderBusinessLogicPage(assets, options = {}) {
     return { ...machine, transitions };
   });
 
-  if (!rules.length && !testEvidence.length && !stateMachines.length) {
+  const scenarios = scenariosInput
+    .map((item) => {
+      const filtered = filterRecord(item);
+      if (!filtered) manifest.dropped_scenarios += 1;
+      return filtered;
+    })
+    .filter(Boolean);
+
+  const calculations = calculationsInput
+    .map((item) => {
+      const filtered = filterRecord(item);
+      if (!filtered) manifest.dropped_calculations += 1;
+      return filtered;
+    })
+    .filter(Boolean);
+
+  const failureModes = failureModesInput
+    .map((item) => {
+      const filtered = filterRecord(item);
+      if (!filtered) {
+        manifest.dropped_failure_modes += 1;
+        return null;
+      }
+      const compensation = Array.isArray(item.compensation)
+        ? item.compensation
+            .map((c) => {
+              if (!c || typeof c !== 'object') return null;
+              const cite = c.citation ? enforceCitation(c.citation, ctx) : null;
+              return { ...c, citation: cite || (c.citation && (!ctx || ctx.mode !== 'strict') ? c.citation : null) };
+            })
+            .filter(Boolean)
+        : [];
+      return { ...filtered, compensation };
+    })
+    .filter(Boolean);
+
+  const invariants = invariantsInput
+    .map((item) => {
+      const filtered = filterRecord(item);
+      if (!filtered) manifest.dropped_invariants += 1;
+      return filtered;
+    })
+    .filter(Boolean);
+
+  if (
+    !rules.length
+    && !testEvidence.length
+    && !stateMachines.length
+    && !scenarios.length
+    && !calculations.length
+    && !failureModes.length
+    && !invariants.length
+  ) {
     return null;
   }
 
@@ -1141,6 +1236,96 @@ function renderBusinessLogicPage(assets, options = {}) {
     lines.push('');
   }
 
+  if (scenarios.length) {
+    lines.push('## 业务场景（Happy / Branch / Exception）');
+    lines.push('');
+    const scenarioGroups = [
+      { type: 'happy', title: '正常路径（Happy Path）' },
+      { type: 'branch', title: '分支路径（Branch）' },
+      { type: 'exception', title: '异常路径（Exception）' },
+    ];
+    for (const group of scenarioGroups) {
+      const subset = scenarios.filter((s) => s.type === group.type);
+      if (!subset.length) continue;
+      lines.push(`### ${group.title}`);
+      lines.push('');
+      lines.push('| # | 场景 | 前置 | 步骤 | 结果 | 来源 |');
+      lines.push('| - | ---- | ---- | ---- | ---- | ---- |');
+      subset.slice(0, 24).forEach((s, idx) => {
+        const toCell = (v) => {
+          const text = Array.isArray(v) ? v.join(' / ') : String(v || '—');
+          return text.replace(/\|/g, '\\|').slice(0, 120) || '—';
+        };
+        const citation = formatCitations(s.citations) || '—';
+        lines.push(
+          `| ${idx + 1} | ${toCell(s.title)} | ${toCell(s.preconditions)} | ${toCell(s.steps)} | ${toCell(s.expected_outcome)} | ${citation} |`,
+        );
+      });
+      lines.push('');
+    }
+  }
+
+  if (calculations.length) {
+    lines.push('## 关键计算与边界');
+    lines.push('');
+    lines.push('> 抽取金额/时间/费率等业务计算逻辑与数值边界，用于核对与回归测试。');
+    lines.push('');
+    lines.push('| # | 公式 / 表达 | 关键字 | 边界 | 来源 |');
+    lines.push('| - | ----------- | ------ | ---- | ---- |');
+    calculations.slice(0, 32).forEach((calc, idx) => {
+      const citation = formatCitations(calc.citations) || '—';
+      const toCell = (s) => String(s || '—').replace(/\|/g, '\\|').slice(0, 140);
+      const boundaries = Array.isArray(calc.boundaries) && calc.boundaries.length
+        ? calc.boundaries.map((b) => b.bound).filter(Boolean).join('；')
+        : '—';
+      lines.push(
+        `| ${idx + 1} | ${toCell(calc.formula_text)} | ${toCell(calc.keyword)} | ${toCell(boundaries)} | ${citation} |`,
+      );
+    });
+    lines.push('');
+  }
+
+  if (failureModes.length) {
+    lines.push('## 失败模式与补偿');
+    lines.push('');
+    lines.push('> 抛出路径（`throw new ...Exception`）与补偿机制（`@Retryable` / `@Fallback` / `@ExceptionHandler` / `catch`）。');
+    lines.push('');
+    lines.push('| # | 触发条件 | 异常类型 | 补偿 | 来源 |');
+    lines.push('| - | -------- | -------- | ---- | ---- |');
+    failureModes.slice(0, 40).forEach((fm, idx) => {
+      const citation = formatCitations(fm.citations) || '—';
+      const toCell = (s) => String(s || '—').replace(/\|/g, '\\|').slice(0, 140);
+      const compensation = Array.isArray(fm.compensation) && fm.compensation.length
+        ? fm.compensation
+            .slice(0, 3)
+            .map((c) => c && typeof c === 'object' ? (c.text || c.kind || '') : String(c || ''))
+            .filter(Boolean)
+            .join('；')
+        : '—';
+      lines.push(
+        `| ${idx + 1} | ${toCell(fm.trigger_condition)} | ${toCell(fm.exception_type)} | ${toCell(compensation)} | ${citation} |`,
+      );
+    });
+    lines.push('');
+  }
+
+  if (invariants.length) {
+    lines.push('## 不变量与约束');
+    lines.push('');
+    lines.push('> 字段校验（`@NotNull` / `@Size` / `@Min` / `@Max` / `@Pattern` …）、断言（`Preconditions.check*` / `Objects.requireNonNull`）、数据库约束（PK / UNIQUE / NOT NULL）。');
+    lines.push('');
+    lines.push('| # | 约束 | 作用域 | 来源路径 |');
+    lines.push('| - | ---- | ------ | -------- |');
+    invariants.slice(0, 60).forEach((inv, idx) => {
+      const citation = formatCitations(inv.citations) || '—';
+      const toCell = (s) => String(s || '—').replace(/\|/g, '\\|').slice(0, 160);
+      lines.push(
+        `| ${idx + 1} | ${toCell(inv.condition)} | ${toCell(inv.scope)} | ${citation} |`,
+      );
+    });
+    lines.push('');
+  }
+
   lines.push('## 附：辅助信息');
   lines.push('');
   lines.push('- 技术构件清单（controllers / services / repositories / tables 等）已降级为辅助信息，参见其他章节「代码分层架构图」与「模块详情」。');
@@ -1151,12 +1336,16 @@ function renderBusinessLogicPage(assets, options = {}) {
     page_slug: '00b-business-logic',
     title: '业务逻辑洞察',
     page_type: 'business-logic',
-    source_files: collectSourceFilesFromAssets(rules, testEvidence),
+    source_files: collectSourceFilesFromAssets(rules, testEvidence, scenarios, calculations, failureModes, invariants),
     content: lines.join('\n'),
     metadata_json: {
       rule_count: rules.length,
       test_evidence_count: testEvidence.length,
       state_machine_count: stateMachines.length,
+      scenario_count: scenarios.length,
+      calculation_count: calculations.length,
+      failure_mode_count: failureModes.length,
+      invariant_count: invariants.length,
       citation_enforcement: {
         mode: ctx ? ctx.mode : 'unenforced',
         ...manifest,
@@ -1166,7 +1355,7 @@ function renderBusinessLogicPage(assets, options = {}) {
   };
 }
 
-function collectSourceFilesFromAssets(rules, testEvidence) {
+function collectSourceFilesFromAssets(...groups) {
   const set = new Set();
   const harvest = (items) => {
     if (!Array.isArray(items)) return;
@@ -1177,8 +1366,7 @@ function collectSourceFilesFromAssets(rules, testEvidence) {
       });
     });
   };
-  harvest(rules);
-  harvest(testEvidence);
+  groups.forEach(harvest);
   return Array.from(set).slice(0, 16);
 }
 

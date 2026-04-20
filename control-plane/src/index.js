@@ -35,6 +35,8 @@ const { createApprovalStore } = require('./approval/store');
 const { createHarnessNotifier } = require('./integrations/harnessNotifier');
 const { createHumanPromptNotifier } = require('./integrations/humanPromptNotifier');
 const memoryStore = require('./memory/store');
+const { runPreflight } = require('./deepwiki/preflight');
+const { DeepWikiError } = require('./deepwiki/errors/error-codes');
 
 const logDir = path.join(__dirname, '../logs');
 if (!fs.existsSync(logDir)) {
@@ -1578,13 +1580,74 @@ app.get('/api/v1/deepwiki/projects/:id/default-published-snapshot', async (req, 
 app.post('/api/v1/deepwiki/projects/:id/regenerate', async (req, res, next) => {
   try {
     const body = req.body || {};
+    const projectId = Number(req.params.id);
+    const skipPreflight = body.skip_preflight === true
+      || String(req.query.skip_preflight || '') === '1'
+      || String(process.env.DEEPWIKI_SKIP_PREFLIGHT || '') === '1';
+
+    let preflight = { ok: true, failures: [], skipped: [] };
+    if (!skipPreflight) {
+      let repoPath = '';
+      try {
+        const bindings = await db.getDeepWikiProjectRepoBindings(projectId);
+        const primary = bindings.find((item) => item.is_primary) || bindings[0];
+        if (primary && primary.local_path) {
+          repoPath = db.resolveWorkspacePath(primary.local_path) || primary.local_path;
+        }
+      } catch (lookupError) {
+        logger.warn('preflight_repo_lookup_failed', { projectId, error: lookupError.message });
+      }
+      preflight = await runPreflight({
+        db,
+        repoPath,
+        branch: body.branch || '',
+      });
+      if (!preflight.ok) {
+        return res.status(422).json({
+          success: false,
+          error: {
+            code: 'DW_E_PREFLIGHT_FAILED',
+            message: '前置依赖校验未通过，已拦截本次生成请求',
+            failures: preflight.failures,
+          },
+        });
+      }
+    }
+
     const data = await db.createDeepWikiRunRequest({
       ...body,
-      project_id: Number(req.params.id),
+      project_id: projectId,
       branch: body.branch || '',
     });
     deepWikiQueue.enqueue(data.run_id);
-    res.status(201).json({ success: true, data });
+    res.status(201).json({ success: true, data, preflight });
+  } catch (error) {
+    if (error instanceof DeepWikiError) {
+      return res.status(422).json({ success: false, error: error.toJSON() });
+    }
+    next(error);
+  }
+});
+
+app.get('/api/v1/deepwiki/projects/:id/preflight', async (req, res, next) => {
+  try {
+    const projectId = Number(req.params.id);
+    let repoPath = '';
+    try {
+      const bindings = await db.getDeepWikiProjectRepoBindings(projectId);
+      const primary = bindings.find((item) => item.is_primary) || bindings[0];
+      if (primary && primary.local_path) {
+        repoPath = db.resolveWorkspacePath(primary.local_path) || primary.local_path;
+      }
+    } catch (lookupError) {
+      logger.warn('preflight_repo_lookup_failed', { projectId, error: lookupError.message });
+    }
+    const result = await runPreflight({
+      db,
+      repoPath,
+      branch: String(req.query.branch || ''),
+    });
+    res.json({ success: true, data: result });
   } catch (error) {
     next(error);
   }

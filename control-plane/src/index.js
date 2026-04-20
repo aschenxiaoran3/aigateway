@@ -37,6 +37,7 @@ const { createHumanPromptNotifier } = require('./integrations/humanPromptNotifie
 const memoryStore = require('./memory/store');
 const { runPreflight } = require('./deepwiki/preflight');
 const { DeepWikiError } = require('./deepwiki/errors/error-codes');
+const { getSharedSupervisor } = require('./deepwiki/health/kb-supervisor');
 
 const logDir = path.join(__dirname, '../logs');
 if (!fs.existsSync(logDir)) {
@@ -1603,14 +1604,37 @@ app.post('/api/v1/deepwiki/projects/:id/regenerate', async (req, res, next) => {
         branch: body.branch || '',
       });
       if (!preflight.ok) {
-        return res.status(422).json({
-          success: false,
-          error: {
-            code: 'DW_E_PREFLIGHT_FAILED',
-            message: '前置依赖校验未通过，已拦截本次生成请求',
-            failures: preflight.failures,
-          },
-        });
+        const kbFailed = (preflight.failures || []).some((item) => item.code === 'DW_E_KB_UNREACHABLE');
+        if (kbFailed) {
+          try {
+            const supervisor = getSharedSupervisor();
+            const healResult = await supervisor.ensureReady({ attempts: 2, intervalMs: 1000 });
+            if (healResult.ok) {
+              preflight = await runPreflight({
+                db,
+                repoPath,
+                branch: body.branch || '',
+              });
+              preflight.healed = true;
+            } else {
+              preflight.healed = false;
+              preflight.heal_attempts = healResult.attempts;
+            }
+          } catch (healError) {
+            logger.warn('kb_supervisor_heal_failed', { error: healError.message });
+          }
+        }
+        if (!preflight.ok) {
+          return res.status(422).json({
+            success: false,
+            error: {
+              code: 'DW_E_PREFLIGHT_FAILED',
+              message: '前置依赖校验未通过，已拦截本次生成请求',
+              failures: preflight.failures,
+              healed: preflight.healed === true,
+            },
+          });
+        }
       }
     }
 

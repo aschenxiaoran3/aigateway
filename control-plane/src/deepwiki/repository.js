@@ -1184,7 +1184,8 @@ const ASSERTION_REGEX = /\b(Preconditions\.(?:checkArgument|checkState|checkNotN
 const INLINE_ASSERT_REGEX = /^\s*assert\s+([^;\n]{1,200});/gm;
 const CALCULATION_KEYWORD_REGEX = /\b(BigDecimal|RoundingMode|Math\.(?:abs|max|min|round|floor|ceil|pow|sqrt|log)|LocalDate(?:Time)?\.plus|Duration\.between|ChronoUnit\.|Money\.|MonetaryAmount|Percentage)\b/;
 const CALCULATION_COMMENT_REGEX = /计算|公式|费率|汇率|税率|折扣|利率|\bformula\b|\brate\b|\bdiscount\b|\btax\b|\binterest\b/i;
-const UNIQUE_CONSTRAINT_REGEX = /\b(?:UNIQUE\s+KEY|CONSTRAINT\s+\w+\s+UNIQUE|@Column\s*\(\s*[^)]*unique\s*=\s*true|@Unique)\b/i;
+const UNIQUE_CONSTRAINT_SQL_REGEX = /\b(?:UNIQUE\s+KEY|CONSTRAINT\s+\w+\s+UNIQUE|UNIQUE\s+INDEX)\b/i;
+const UNIQUE_CONSTRAINT_JAVA_REGEX = /(?:@Column\s*\(\s*[^)]*unique\s*=\s*true|@Table\s*\(\s*[^)]*uniqueConstraints\s*=|@Unique)\b/i;
 
 const BUSINESS_SIGNAL_SOURCE_EXTS = ['.java', '.kt', '.scala', '.groovy'];
 const BUSINESS_SIGNAL_SQL_EXTS = ['.sql'];
@@ -1369,7 +1370,7 @@ function collectBusinessLogicSignals(readableFiles) {
       const lines = preview.split(/\r?\n/);
       for (let i = 0; i < lines.length; i += 1) {
         const raw = lines[i];
-        if (!UNIQUE_CONSTRAINT_REGEX.test(raw)) continue;
+        if (!UNIQUE_CONSTRAINT_SQL_REGEX.test(raw)) continue;
         pushIfBounded(
           assertionStatements,
           {
@@ -1379,6 +1380,29 @@ function collectBusinessLogicSignals(readableFiles) {
             assertion: 'UNIQUE',
             arguments: raw.trim().slice(0, 200),
             source_type: 'sql_unique',
+          },
+          CAP_PER_KIND,
+        );
+        if (assertionStatements.length >= CAP_PER_KIND) break;
+      }
+    }
+
+    if (BUSINESS_SIGNAL_SOURCE_EXTS.includes(ext)) {
+      // @Column(unique=true) / @Unique / @Table(uniqueConstraints=...) → invariant candidates
+      const lines = preview.split(/\r?\n/);
+      for (let i = 0; i < lines.length; i += 1) {
+        const raw = lines[i];
+        if (!raw) continue;
+        if (!UNIQUE_CONSTRAINT_JAVA_REGEX.test(raw)) continue;
+        pushIfBounded(
+          assertionStatements,
+          {
+            path: file.path,
+            line_start: i + 1,
+            line_end: i + 1,
+            assertion: 'UNIQUE',
+            arguments: raw.trim().slice(0, 200),
+            source_type: 'java_unique',
           },
           CAP_PER_KIND,
         );

@@ -1048,16 +1048,18 @@ function extractInvariants(options) {
     if (Number.isFinite(stmt.line_end)) citation.line_end = Number(stmt.line_end);
     const scope = stmt.source_type === 'sql_unique'
       ? 'database_unique'
-      : stmt.source_type === 'inline_assert'
-        ? 'runtime_assert'
-        : 'guard_call';
+      : stmt.source_type === 'java_unique'
+        ? 'entity_unique'
+        : stmt.source_type === 'inline_assert'
+          ? 'runtime_assert'
+          : 'guard_call';
     push({
       condition,
       scope,
       source_type: stmt.source_type || 'assertion',
       citations: citation.path ? [citation] : [],
       domain_hint: classifyDomain(`${condition} ${stmt.path || ''}`, lexicon),
-      confidence: stmt.source_type === 'sql_unique' ? 0.85 : 0.75,
+      confidence: stmt.source_type === 'sql_unique' || stmt.source_type === 'java_unique' ? 0.85 : 0.75,
     });
   }
 

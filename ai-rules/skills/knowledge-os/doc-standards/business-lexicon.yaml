@@ -47,7 +47,7 @@ action_verbs:
   - canonical: import
     aliases: [导入, 上传, 录入, upload]
   - canonical: export
-    aliases: [导出, 下载, 导出, download]
+    aliases: [导出, 下载, 输出, download]
 
 # 规则触发词：这些词出现在注释/测试名/方法名里，几乎一定对应一条业务规则。
 # 分"强触发"（必然产出规则）和"弱触发"（需结合上下文）。

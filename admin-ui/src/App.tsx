@@ -38,6 +38,7 @@ import AcceptanceCenter from './pages/AcceptanceCenter';
 import DocumentGateCenter from './pages/DocumentGateCenter';
 import DeepWikiCenter from './pages/DeepWikiCenter';
 import DeepWikiProjectPage from './pages/DeepWikiProjectPage';
+import DeepWikiHealthPanel from './pages/DeepWikiHealthPanel';
 import AIFlowboardCenter from './pages/AIFlowboardCenter';
 
 const { Header, Content, Sider } = Layout;
@@ -66,6 +67,7 @@ const menuItems: MenuItem[] = [
   getItem('门禁治理', 'gate', <SafetyCertificateOutlined />),
   getItem('文档门禁', 'doc-gate', <FileMarkdownOutlined />),
   getItem('Deep Wiki', 'deepwiki', <ReadOutlined />),
+  getItem('Deep Wiki 健康', 'deepwiki-health', <ReadOutlined />),
   getItem('AI 协同研发', 'flowboard', <ReadOutlined />),
   getItem('度量与可观测', 'cost', <DollarOutlined />),
   getItem('知识与审计', 'knowledge', <AuditOutlined />),
@@ -84,6 +86,7 @@ const MENU_PATH: Record<string, string> = {
   gate: '/gate',
   'doc-gate': '/doc-gate',
   deepwiki: '/deepwiki',
+  'deepwiki-health': '/deepwiki/health',
   flowboard: '/flowboard',
   cost: '/cost',
   knowledge: '/knowledge',
@@ -95,6 +98,7 @@ const MENU_PATH: Record<string, string> = {
 };
 
 function menuKeyFromPath(pathname: string): string {
+  if (pathname.startsWith('/deepwiki/health')) return 'deepwiki-health';
   if (pathname.startsWith('/deepwiki')) return 'deepwiki';
   const seg = pathname.split('/').filter(Boolean)[0];
   if (!seg) return 'dashboard';
@@ -222,6 +226,8 @@ const App: React.FC = () => {
             <Route path="/doc-gate" element={<DocumentGateCenter />} />
             <Route path="/knowledge" element={<KnowledgeAudit />} />
             <Route path="/deepwiki" element={<DeepWikiCenter />} />
+            <Route path="/deepwiki/health" element={<DeepWikiHealthPanel />} />
+            <Route path="/deepwiki/health/:projectId" element={<DeepWikiHealthPanel />} />
             <Route path="/deepwiki/project/:projectId" element={<DeepWikiProjectPage />} />
             <Route
               path="/flowboard"

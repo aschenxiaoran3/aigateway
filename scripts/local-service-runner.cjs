@@ -12,44 +12,97 @@ const execFileAsync = promisify(execFile);
 const projectRoot = path.resolve(__dirname, '..');
 const nodePath = process.execPath;
 const pythonPath = path.join(projectRoot, 'knowledge-base/.venv/bin/python');
+const sharedEnvPath = path.join(projectRoot, '.env.shared.local');
+
+function parseEnvFile(filePath) {
+  if (!fs.existsSync(filePath)) {
+    return {};
+  }
+
+  const values = {};
+  const lines = fs.readFileSync(filePath, 'utf8').split(/\r?\n/);
+  for (const rawLine of lines) {
+    const line = String(rawLine || '').trim();
+    if (!line || line.startsWith('#')) {
+      continue;
+    }
+    const separatorIndex = line.indexOf('=');
+    if (separatorIndex <= 0) {
+      continue;
+    }
+    const key = line.slice(0, separatorIndex).trim();
+    let value = line.slice(separatorIndex + 1).trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    values[key] = value;
+  }
+  return values;
+}
+
+const sharedEnv = parseEnvFile(sharedEnvPath);
+
+function envValue(name, fallback = '') {
+  const value = process.env[name] ?? sharedEnv[name];
+  return value == null || value === '' ? fallback : value;
+}
+
+function envPort(name, fallback) {
+  const raw = envValue(name, String(fallback));
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+const adminUiPort = envPort('ADMIN_UI_PORT', 3000);
+const aiGatewayPort = envPort('AI_GATEWAY_PORT', 3001);
+const controlPlanePort = envPort('CONTROL_PLANE_PORT', 3104);
+const knowledgeBasePort = envPort('KNOWLEDGE_BASE_PORT', 8000);
 
 const SERVICES = {
   'admin-ui': {
     label: 'Admin UI',
     cwd: path.join(projectRoot, 'admin-ui'),
     command: [nodePath, path.join(projectRoot, 'admin-ui/scripts/start-dev.cjs')],
-    port: 3000,
-    healthUrl: 'http://127.0.0.1:3000/',
+    port: adminUiPort,
+    healthUrl: `http://127.0.0.1:${adminUiPort}/`,
     startupTimeoutMs: 45000,
     env: {
       BROWSER: 'none',
+      ADMIN_UI_PORT: String(adminUiPort),
     },
   },
   'ai-gateway': {
     label: 'AI Gateway',
     cwd: path.join(projectRoot, 'ai-gateway'),
     command: [nodePath, path.join(projectRoot, 'ai-gateway/src/index.js')],
-    port: 3001,
-    healthUrl: 'http://127.0.0.1:3001/health',
+    port: aiGatewayPort,
+    healthUrl: `http://127.0.0.1:${aiGatewayPort}/health`,
     startupTimeoutMs: 45000,
+    env: {
+      PORT: String(aiGatewayPort),
+    },
   },
   'control-plane': {
     label: 'Control Plane',
     cwd: path.join(projectRoot, 'control-plane'),
     command: [nodePath, path.join(projectRoot, 'control-plane/src/index.js')],
-    port: 3104,
-    healthUrl: 'http://127.0.0.1:3104/health',
+    port: controlPlanePort,
+    healthUrl: `http://127.0.0.1:${controlPlanePort}/health`,
     startupTimeoutMs: 45000,
+    env: {
+      PORT: String(controlPlanePort),
+    },
   },
   'knowledge-base': {
     label: 'Knowledge Base',
     cwd: path.join(projectRoot, 'knowledge-base'),
     command: [pythonPath, '-m', 'api.search_service'],
-    port: 8000,
-    healthUrl: 'http://127.0.0.1:8000/health',
+    port: knowledgeBasePort,
+    healthUrl: envValue('KNOWLEDGE_BASE_HEALTH_URL', `http://127.0.0.1:${knowledgeBasePort}/health`),
     startupTimeoutMs: 120000,
     env: {
       PYTHONUNBUFFERED: '1',
+      PORT: String(knowledgeBasePort),
     },
   },
 };
@@ -205,6 +258,7 @@ async function main() {
     stdio: 'inherit',
     env: {
       ...process.env,
+      ...sharedEnv,
       ...(service.env || {}),
     },
   });

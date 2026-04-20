@@ -1295,6 +1295,14 @@ function collectProjectManifestInventory(repoUnits = []) {
     entities: mergeUniqueObjects(inventories.flatMap((item) => item.entities || []), (item) => `${item.path}:${item.class_name}:${item.table_name}`).slice(0, 80),
     feign_clients: mergeUniqueObjects(inventories.flatMap((item) => item.feign_clients || []), (item) => `${item.path}:${item.class_name}`).slice(0, 40),
     sql_tables: mergeUniqueObjects(inventories.flatMap((item) => item.sql_tables || []), (item) => `${item.path}:${item.table_name}`).slice(0, 80),
+    rule_comments: mergeUniqueObjects(
+      inventories.flatMap((item) => item.rule_comments || []),
+      (item) => `${item.path}:${item.line_start || ''}:${(item.text || '').slice(0, 60)}`
+    ).slice(0, 200),
+    test_methods: mergeUniqueObjects(
+      inventories.flatMap((item) => item.test_methods || []),
+      (item) => `${item.path}:${item.class_name || ''}:${item.method_name || ''}`
+    ).slice(0, 200),
     api_endpoints: uniqueBy(inventories.flatMap((item) => item.api_endpoints || []), (item) => item).slice(0, 80),
     deploy_files: uniqueBy(inventories.flatMap((item) => item.deploy_files || []), (item) => item).slice(0, 40),
     tables: uniqueBy(inventories.flatMap((item) => item.tables || []), (item) => item).slice(0, 80),

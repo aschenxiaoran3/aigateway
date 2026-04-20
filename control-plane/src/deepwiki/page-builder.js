@@ -998,7 +998,22 @@ function renderBusinessLogicPage(assets) {
           if (t.trigger) parts.push(`触发：${t.trigger}`);
           if (t.guard) parts.push(`守卫：${t.guard}`);
           const effects = Array.isArray(t.side_effects) ? t.side_effects.filter(Boolean) : [];
-          if (effects.length) parts.push(`副作用：${effects.slice(0, 3).join('、')}`);
+          if (effects.length) {
+            const rendered = effects
+              .slice(0, 3)
+              .map((e) => {
+                if (e == null) return '';
+                if (typeof e === 'string') return e;
+                if (typeof e === 'object') {
+                  const label = e.name || e.text || e.hint || e.topic || e.type;
+                  if (label) return e.type && e.type !== label ? `${e.type}:${label}` : String(label);
+                  try { return JSON.stringify(e); } catch (_err) { return ''; }
+                }
+                return String(e);
+              })
+              .filter(Boolean);
+            if (rendered.length) parts.push(`副作用：${rendered.join('、')}`);
+          }
           const cite = formatCitation(t.citation);
           if (cite) parts.push(`证据：${cite}`);
           lines.push(`  - ${parts.join(' ｜ ')}`);

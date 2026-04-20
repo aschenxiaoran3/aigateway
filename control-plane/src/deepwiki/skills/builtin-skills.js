@@ -113,6 +113,9 @@ function buildAssetsByStage(inputs = {}) {
       state_machines: inputs.state_machines,
       aggregate_candidates: inputs.aggregate_candidates,
     },
+    business_logic_mining: {
+      business_logic_assets: inputs.business_logic_assets,
+    },
     ddd_mapping: {
       domain_model: inputs.domain_model,
       capability_map: inputs.capability_map,

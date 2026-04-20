@@ -238,6 +238,36 @@ test('buildBusinessLogicFromInventory + renderBusinessLogicPage produces a wiki 
   assert.ok(Array.isArray(page.source_files));
 });
 
+test('renderBusinessLogicPage renders object-shaped side_effects without [object Object]', () => {
+  const page = renderBusinessLogicPage({
+    business_rules: [],
+    test_evidence: [],
+    state_machines_with_guards: [
+      {
+        entity: 'Order',
+        states: ['CREATED', 'PAID'],
+        transitions: [
+          {
+            from: 'CREATED',
+            to: 'PAID',
+            trigger: 'pay',
+            guard: 'balance >= amount',
+            side_effects: [
+              { type: 'event_published', name: 'OrderPaidEvent', topic: 'order.paid' },
+              { type: 'api_called', name: 'chargeCard' },
+              'audit log written',
+            ],
+          },
+        ],
+      },
+    ],
+  });
+  assert.ok(page, 'page should render when only state machines exist');
+  assert.ok(!/\[object Object\]/.test(page.content), 'side_effects must not render as [object Object]');
+  assert.ok(/OrderPaidEvent/.test(page.content), 'should include event name');
+  assert.ok(/audit log written/.test(page.content), 'string side effects pass through');
+});
+
 test('renderBusinessLogicPage returns null when no signals exist', () => {
   const empty = renderBusinessLogicPage({ business_rules: [], test_evidence: [], state_machines_with_guards: [] });
   assert.equal(empty, null);

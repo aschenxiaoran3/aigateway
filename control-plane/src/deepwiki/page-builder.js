@@ -1,3 +1,6 @@
+const { deriveBusinessLogicAssets } = require('./business-logic-mining');
+const { loadBusinessLexicon } = require('./business-lexicon');
+
 function createBuildDeepWikiPages(deps = {}) {
   const {
     summarizeResearchReport,
@@ -38,6 +41,7 @@ function createBuildDeepWikiPages(deps = {}) {
     outputProfile,
     diagramProfile,
     synthesizedDiagrams = null,
+    businessLogicAssets = null,
   }) {
     const commitShort = String(repo.commit_sha || '').slice(0, 12);
     const researchSummary = summarizeResearchReport(researchReport);
@@ -129,6 +133,8 @@ function createBuildDeepWikiPages(deps = {}) {
       branch: repo.branch,
       commit_sha: repo.commit_sha,
     };
+
+    const resolvedBusinessLogic = businessLogicAssets || buildBusinessLogicFromInventory(inventory);
 
     const pages = [];
     const pushPage = (page) => {
@@ -230,6 +236,11 @@ function createBuildDeepWikiPages(deps = {}) {
         buildMermaidBlock('', overviewDiagram),
       ].join('\n'),
     });
+
+    const businessLogicPage = renderBusinessLogicPage(resolvedBusinessLogic);
+    if (businessLogicPage) {
+      pushPage(businessLogicPage);
+    }
 
     pushPage({
       page_slug: '01-code-layered-architecture',
@@ -891,6 +902,168 @@ function createBuildDeepWikiPages(deps = {}) {
   };
 }
 
+function buildBusinessLogicFromInventory(inventory) {
+  if (!inventory || typeof inventory !== 'object') {
+    return { business_rules: [], test_evidence: [], state_machines_with_guards: [], summary: {} };
+  }
+  const ruleComments = Array.isArray(inventory.rule_comments) ? inventory.rule_comments : [];
+  const testMethods = Array.isArray(inventory.test_methods) ? inventory.test_methods : [];
+  if (!ruleComments.length && !testMethods.length) {
+    return { business_rules: [], test_evidence: [], state_machines_with_guards: [], summary: {} };
+  }
+  const topology = {
+    repos: [
+      {
+        repo_slug: inventory.repo_slug || 'current',
+        commentRecords: ruleComments,
+        testMethods,
+      },
+    ],
+  };
+  try {
+    const lexicon = loadBusinessLexicon();
+    return deriveBusinessLogicAssets({
+      config: {},
+      topology,
+      dataContracts: { apiContracts: [], erModel: [], eventCatalog: [] },
+      semantic: { businessTerms: [], businessActions: [], stateMachines: [] },
+      lexicon,
+    });
+  } catch (err) {
+    return { business_rules: [], test_evidence: [], state_machines_with_guards: [], summary: { error: String(err && err.message || err) } };
+  }
+}
+
+function formatCitation(citation) {
+  if (!citation || typeof citation !== 'object') return '';
+  const { path: p, line_start: ls, line_end: le } = citation;
+  if (!p) return '';
+  if (ls && le && ls !== le) return `${p}:L${ls}-L${le}`;
+  if (ls) return `${p}:L${ls}`;
+  return p;
+}
+
+function formatCitations(citations) {
+  if (!Array.isArray(citations)) return '';
+  const rendered = citations.map(formatCitation).filter(Boolean);
+  if (!rendered.length) return '';
+  return rendered.slice(0, 3).join('、');
+}
+
+function renderBusinessLogicPage(assets) {
+  if (!assets || typeof assets !== 'object') return null;
+  const rules = Array.isArray(assets.business_rules) ? assets.business_rules : [];
+  const testEvidence = Array.isArray(assets.test_evidence) ? assets.test_evidence : [];
+  const stateMachines = Array.isArray(assets.state_machines_with_guards) ? assets.state_machines_with_guards : [];
+  if (!rules.length && !testEvidence.length && !stateMachines.length) {
+    return null;
+  }
+
+  const lines = [];
+  lines.push('# 业务逻辑洞察');
+  lines.push('');
+  lines.push('> 本页聚合从代码注释、测试命名、状态机等来源挖掘得到的**业务语义**证据；目的在于让 Wiki 正文承载「业务规则 / 场景 / 状态迁移」，而非仅罗列技术构件。');
+  lines.push('');
+
+  if (rules.length) {
+    lines.push('## 业务规则');
+    lines.push('');
+    lines.push('| # | 规则 | 触发词 | 来源 | 置信度 |');
+    lines.push('| - | ---- | ------ | ---- | ------ |');
+    rules.slice(0, 40).forEach((rule, idx) => {
+      const citation = formatCitations(rule.citations) || '—';
+      const text = String(rule.natural_text || '').replace(/\|/g, '\\|').slice(0, 160);
+      const trigger = String(rule.trigger || '').replace(/\|/g, '\\|');
+      const confidence = typeof rule.confidence === 'number' ? rule.confidence.toFixed(2) : '—';
+      lines.push(`| ${idx + 1} | ${text || '—'} | ${trigger || '—'} | ${citation} | ${confidence} |`);
+    });
+    lines.push('');
+  }
+
+  if (stateMachines.length) {
+    lines.push('## 状态机与守卫');
+    lines.push('');
+    stateMachines.slice(0, 8).forEach((machine) => {
+      lines.push(`### ${machine.entity || '状态机'}`);
+      const states = Array.isArray(machine.states) ? machine.states : [];
+      if (states.length) {
+        lines.push(`- 状态：${states.join(' → ')}`);
+      }
+      const transitions = Array.isArray(machine.transitions) ? machine.transitions : [];
+      if (transitions.length) {
+        lines.push('- 迁移：');
+        transitions.slice(0, 16).forEach((t) => {
+          const parts = [];
+          parts.push(`\`${t.from || '?'}\` → \`${t.to || '?'}\``);
+          if (t.trigger) parts.push(`触发：${t.trigger}`);
+          if (t.guard) parts.push(`守卫：${t.guard}`);
+          const effects = Array.isArray(t.side_effects) ? t.side_effects.filter(Boolean) : [];
+          if (effects.length) parts.push(`副作用：${effects.slice(0, 3).join('、')}`);
+          const cite = formatCitation(t.citation);
+          if (cite) parts.push(`证据：${cite}`);
+          lines.push(`  - ${parts.join(' ｜ ')}`);
+        });
+      }
+      lines.push('');
+    });
+  }
+
+  if (testEvidence.length) {
+    lines.push('## 测试证据（Given-When-Then）');
+    lines.push('');
+    lines.push('> 测试命名是业务规则最诚实的来源；下列条目由测试方法名 / `it(...)` 描述自动解析。');
+    lines.push('');
+    lines.push('| # | 描述 | Given | When | Then | 来源 |');
+    lines.push('| - | ---- | ----- | ---- | ---- | ---- |');
+    testEvidence.slice(0, 40).forEach((item, idx) => {
+      const citation = formatCitations(item.citations) || '—';
+      const toCell = (s) => String(s || '—').replace(/\|/g, '\\|').slice(0, 100);
+      lines.push(
+        `| ${idx + 1} | ${toCell(item.description)} | ${toCell(item.given)} | ${toCell(item.when)} | ${toCell(item.then)} | ${citation} |`,
+      );
+    });
+    lines.push('');
+  }
+
+  lines.push('## 附：辅助信息');
+  lines.push('');
+  lines.push('- 技术构件清单（controllers / services / repositories / tables 等）已降级为辅助信息，参见其他章节「代码分层架构图」与「模块详情」。');
+  lines.push('- 本页内容来自 L3.5 `business_logic_mining` 阶段的启发式抽取，`citations` 字段已携带 `path` + `line_start` / `line_end`。');
+
+  const summary = assets.summary || {};
+  return {
+    page_slug: '00b-business-logic',
+    title: '业务逻辑洞察',
+    page_type: 'business-logic',
+    source_files: collectSourceFilesFromAssets(rules, testEvidence),
+    content: lines.join('\n'),
+    metadata_json: {
+      rule_count: rules.length,
+      test_evidence_count: testEvidence.length,
+      state_machine_count: stateMachines.length,
+      summary,
+    },
+  };
+}
+
+function collectSourceFilesFromAssets(rules, testEvidence) {
+  const set = new Set();
+  const harvest = (items) => {
+    if (!Array.isArray(items)) return;
+    items.forEach((item) => {
+      if (!item || !Array.isArray(item.citations)) return;
+      item.citations.forEach((c) => {
+        if (c && c.path) set.add(c.path);
+      });
+    });
+  };
+  harvest(rules);
+  harvest(testEvidence);
+  return Array.from(set).slice(0, 16);
+}
+
 module.exports = {
   createBuildDeepWikiPages,
+  buildBusinessLogicFromInventory,
+  renderBusinessLogicPage,
 };

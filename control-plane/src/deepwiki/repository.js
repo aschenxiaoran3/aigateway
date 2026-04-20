@@ -732,6 +732,9 @@ function collectRepositoryInventory(repoPath) {
 
   const sourceCodeFiles = readableFiles.filter((file) => hasSourceCodeExtension(file.path));
 
+  const ruleComments = collectRuleCommentRecords(readableFiles);
+  const testMethods = collectTestMethodRecords(readableFiles);
+
   const categorizedModules = Array.from(moduleBuckets.entries())
     .map(([name, files]) => {
       const sorted = files.slice().sort((a, b) => a.path.localeCompare(b.path));
@@ -1000,8 +1003,116 @@ function collectRepositoryInventory(repoPath) {
     api_endpoints: apiEndpoints,
     deploy_files: deployFiles,
     tables: tableNames,
+    rule_comments: ruleComments,
+    test_methods: testMethods,
     sample_tree: allFiles.slice(0, 200),
   };
+}
+
+const RULE_TRIGGER_REGEX = /必须|不得|禁止|只允许|仅限|至少|至多|最多|最少|不能|不允许|必填|应当|约束|\bmust\s+not\b|\bmust\b|\brequired\b|\bmandatory\b|\bforbidden\b|\bonly\b\s+(?:if|when|allow)|\bcannot\b|\bat\s+least\b|\bat\s+most\b/i;
+
+function collectRuleCommentRecords(readableFiles) {
+  const records = [];
+  const MAX_RECORDS = 200;
+  const MAX_LINE_LENGTH = 300;
+  for (const file of readableFiles) {
+    if (records.length >= MAX_RECORDS) break;
+    const ext = path.extname(file.path).toLowerCase();
+    if (!['.java', '.kt', '.scala', '.groovy', '.ts', '.tsx', '.js', '.jsx', '.go', '.py', '.rb', '.cs', '.sql'].includes(ext)) {
+      continue;
+    }
+    const preview = typeof file.preview === 'string' ? file.preview : '';
+    if (!preview) continue;
+    const lines = preview.split(/\r?\n/);
+    for (let i = 0; i < lines.length && records.length < MAX_RECORDS; i += 1) {
+      const raw = lines[i];
+      if (raw.length > MAX_LINE_LENGTH) continue;
+      const text = extractCommentText(raw, ext);
+      if (!text) continue;
+      if (!RULE_TRIGGER_REGEX.test(text)) continue;
+      records.push({
+        text: text.trim(),
+        path: file.path,
+        line_start: i + 1,
+        line_end: i + 1,
+        source_type: ext === '.sql' ? 'sql_comment' : 'code_comment',
+      });
+    }
+  }
+  return records;
+}
+
+function extractCommentText(line, ext) {
+  const trimmed = line.trim();
+  if (!trimmed) return '';
+  if (ext === '.py' || ext === '.rb') {
+    const m = trimmed.match(/^#\s*(.+)$/);
+    if (m) return m[1];
+    return '';
+  }
+  if (ext === '.sql') {
+    const dash = trimmed.match(/^--\s*(.+)$/);
+    if (dash) return dash[1];
+    const hash = trimmed.match(/^#\s*(.+)$/);
+    if (hash) return hash[1];
+    const blockInline = trimmed.match(/\/\*+\s*(.+?)\s*\*+\//);
+    if (blockInline) return blockInline[1];
+    const commentEq = trimmed.match(/\bCOMMENT\s*[:=]?\s*['"](.+?)['"]/i);
+    if (commentEq) return commentEq[1];
+    return '';
+  }
+  const lineComment = trimmed.match(/^\/\/\s*(.+)$/);
+  if (lineComment) return lineComment[1];
+  const blockStar = trimmed.match(/^\*\s*(.+)$/);
+  if (blockStar) return blockStar[1];
+  const blockInline = trimmed.match(/\/\*+\s*(.+?)\s*\*+\//);
+  if (blockInline) return blockInline[1];
+  return '';
+}
+
+const JUNIT_METHOD_REGEX = /@Test\b[\s\S]{0,160}?\b(?:public|private|protected)?\s*(?:static\s+)?(?:\w+\s+)?(\w+)\s*\(/g;
+const JEST_IT_REGEX = /(?:\bit|\btest)\s*\(\s*['"`]([^'"`\n]{3,200})['"`]/g;
+const PYTEST_REGEX = /^\s*def\s+(test_[A-Za-z0-9_]+)\s*\(/gm;
+
+function collectTestMethodRecords(readableFiles) {
+  const records = [];
+  const MAX_RECORDS = 200;
+  for (const file of readableFiles) {
+    if (records.length >= MAX_RECORDS) break;
+    if (!/(^|\/)(__tests__|tests?|specs?)\/|(\.|-|_)(test|spec)\./i.test(file.path)) continue;
+    const preview = typeof file.preview === 'string' ? file.preview : '';
+    if (!preview) continue;
+    const ext = path.extname(file.path).toLowerCase();
+    if (ext === '.java' || ext === '.kt' || ext === '.groovy') {
+      let m;
+      while ((m = JUNIT_METHOD_REGEX.exec(preview)) && records.length < MAX_RECORDS) {
+        const name = m[1];
+        if (!name || /^(setUp|tearDown|before|after)/i.test(name)) continue;
+        const lineNo = preview.slice(0, m.index).split(/\r?\n/).length;
+        records.push({ name, path: file.path, line_start: lineNo, line_end: lineNo, framework: 'junit' });
+      }
+      JUNIT_METHOD_REGEX.lastIndex = 0;
+    } else if (ext === '.ts' || ext === '.tsx' || ext === '.js' || ext === '.jsx') {
+      let m;
+      while ((m = JEST_IT_REGEX.exec(preview)) && records.length < MAX_RECORDS) {
+        const name = m[1];
+        if (!name || name.length < 3) continue;
+        const lineNo = preview.slice(0, m.index).split(/\r?\n/).length;
+        records.push({ name, path: file.path, line_start: lineNo, line_end: lineNo, framework: 'jest' });
+      }
+      JEST_IT_REGEX.lastIndex = 0;
+    } else if (ext === '.py') {
+      let m;
+      while ((m = PYTEST_REGEX.exec(preview)) && records.length < MAX_RECORDS) {
+        const name = m[1];
+        if (!name) continue;
+        const lineNo = preview.slice(0, m.index).split(/\r?\n/).length;
+        records.push({ name, path: file.path, line_start: lineNo, line_end: lineNo, framework: 'pytest' });
+      }
+      PYTEST_REGEX.lastIndex = 0;
+    }
+  }
+  return records;
 }
 
 function prefixInventoryPaths(inventory, prefix) {
@@ -1077,6 +1188,8 @@ function prefixInventoryPaths(inventory, prefix) {
     entities: prefixObjectArray(inventory.entities),
     feign_clients: prefixObjectArray(inventory.feign_clients),
     sql_tables: prefixObjectArray(inventory.sql_tables),
+    rule_comments: prefixObjectArray(inventory.rule_comments),
+    test_methods: prefixObjectArray(inventory.test_methods),
   };
 }
 

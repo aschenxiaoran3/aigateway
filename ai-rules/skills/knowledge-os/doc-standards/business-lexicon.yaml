@@ -1,0 +1,155 @@
+# business-lexicon.yaml
+# DeepWiki 业务逻辑挖掘（L3.5）使用的受管理词典。
+# 所有词项均以小写（英文）或原形（中文）存放；匹配时做归一化/小写化。
+#
+# 设计原则：
+#   1. 中英双语：业务词汇需覆盖中英文同义词族，避免漏抽。
+#   2. 语义分组：按"动作/规则触发词/领域限定词/反模式"分组，便于扩展。
+#   3. 可扩展：新增领域词汇只需在 domain_specific.* 下追加条目。
+#
+# 使用方（目前）：
+#   - control-plane/src/deepwiki/business-lexicon.js          （loader）
+#   - control-plane/src/deepwiki/business-logic-mining.js     （3 个抽取器）
+
+version: 1
+
+# 业务动作动词：用于把"方法名/测试名/API action/接口 action"归一化为业务动作。
+# 成对出现 (canonical + aliases)。
+action_verbs:
+  - canonical: create
+    aliases: [创建, 新增, 新建, 添加, add, new, register, submit, issue]
+  - canonical: update
+    aliases: [更新, 修改, 编辑, 变更, edit, modify, change, patch]
+  - canonical: delete
+    aliases: [删除, 移除, 销毁, remove, destroy, drop, cancel, 取消]
+  - canonical: query
+    aliases: [查询, 获取, 查看, 检索, get, fetch, list, find, search, lookup]
+  - canonical: approve
+    aliases: [审批, 批准, 通过, 核准, 确认, confirm, accept, ok]
+  - canonical: reject
+    aliases: [拒绝, 驳回, 否决, decline, deny, refuse]
+  - canonical: publish
+    aliases: [发布, 上线, 公开, release, deploy]
+  - canonical: offline
+    aliases: [下线, 停用, 停止, 关闭, stop, disable, deactivate]
+  - canonical: pay
+    aliases: [支付, 付款, 结算, charge, settle, billing]
+  - canonical: refund
+    aliases: [退款, 退费, 返还, reimburse]
+  - canonical: notify
+    aliases: [通知, 推送, 告知, push, notify, alert, emit]
+  - canonical: validate
+    aliases: [校验, 验证, 检查, verify, check, assert, ensure]
+  - canonical: authorize
+    aliases: [鉴权, 授权, 授信, auth, authorize, grant]
+  - canonical: synchronize
+    aliases: [同步, 对齐, sync, align, reconcile]
+  - canonical: import
+    aliases: [导入, 上传, 录入, upload]
+  - canonical: export
+    aliases: [导出, 下载, 导出, download]
+
+# 规则触发词：这些词出现在注释/测试名/方法名里，几乎一定对应一条业务规则。
+# 分"强触发"（必然产出规则）和"弱触发"（需结合上下文）。
+rule_triggers:
+  strong_cn:
+    - 必须
+    - 不得
+    - 禁止
+    - 只允许
+    - 仅限
+    - 至少
+    - 至多
+    - 最多
+    - 最少
+    - 不能
+    - 不允许
+    - 必填
+    - 要求
+    - 应当
+    - 约束
+  strong_en:
+    - must
+    - must not
+    - mustnt
+    - required
+    - mandatory
+    - forbidden
+    - only
+    - at least
+    - at most
+    - no more than
+    - no less than
+    - cannot
+    - not allowed
+  weak_cn:
+    - 如果
+    - 当
+    - 若
+    - 当且仅当
+    - 例如
+  weak_en:
+    - if
+    - when
+    - unless
+    - given
+    - provided
+
+# 测试名语义结构（Given-When-Then / Arrange-Act-Assert）
+# 用于从 `testXxxShouldYyyWhenZzz` 这类命名里还原一条业务规则。
+test_name_patterns:
+  junit:
+    prefixes: [test, should, when, given]
+    splitters: ["should", "when", "given", "if", "throws", "returns"]
+  jest_it:
+    # it('should reject order when total exceeds limit')
+    # it('当订单金额超过限额时应拒绝下单')
+    lead_words_en: ["should", "must", "can", "cannot", "will"]
+    lead_words_cn: ["应", "应该", "必须", "允许", "拒绝", "能", "不能", "会"]
+
+# 领域限定词：出现在类名/表名/路径中时视为强业务信号。
+# 每一项是一个领域簇；key 是机器名，labels 是该领域的常见中英文表述。
+domain_specific:
+  order:
+    labels: [订单, 订单管理, order, orders]
+    key_entities: [order, order_item, orderline, payment, shipment]
+    key_states: [draft, submitted, paid, shipped, completed, cancelled, refunded]
+  payment:
+    labels: [支付, 结算, 付款, payment, billing, settlement]
+    key_entities: [payment, transaction, invoice, charge, refund]
+    key_states: [pending, succeeded, failed, refunded, partially_refunded]
+  user:
+    labels: [用户, 账号, 会员, user, account, member]
+    key_entities: [user, account, profile, role, permission]
+    key_states: [active, disabled, locked, deleted]
+  audit:
+    labels: [审核, 审批, 合规, audit, review, compliance]
+    key_entities: [audit, approval, review, workflow_task]
+    key_states: [pending, approved, rejected, revoked]
+  api_gateway:
+    labels: [网关, 接入, 鉴权, 限流, gateway, ingress, throttle, ratelimit]
+    key_entities: [api_key, route, plugin, upstream, rate_limit_rule, policy]
+    key_states: [active, disabled, draft, published]
+  provider:
+    labels: [模型供应商, 供应商, provider, vendor, llm_provider]
+    key_entities: [provider, model, model_version, provider_credential]
+    key_states: [available, degraded, disabled]
+
+# 状态机守卫关键词：在 trigger/注释里出现这些 + 金额/数量/状态字段时，上升为 guard。
+state_machine_guard_keywords:
+  cn: [当, 若, 如果, 并且, 同时, 仅当, 除非, 前提是]
+  en: [when, if, and, while, only if, unless, provided]
+
+# 副作用关键词：触发事件/发邮件/写日志/推 MQ 时视为副作用。
+side_effect_keywords:
+  cn: [发送通知, 写审计, 推送消息, 发布事件, 记录日志, 扣减, 增加, 触发, 回调]
+  en: [publish, emit, send, notify, log, audit, enqueue, callback, webhook]
+
+# 反模式：出现这些词的字符串不视为业务规则。
+anti_patterns:
+  - TODO
+  - FIXME
+  - XXX
+  - debug
+  - deprecated
+  - legacy

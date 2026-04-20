@@ -17,6 +17,8 @@ const {
   deriveQualityAssets,
   deriveDerivationAssets,
 } = require('../asset-derivation');
+const { deriveBusinessLogicAssets } = require('../business-logic-mining');
+const { loadBusinessLexicon } = require('../business-lexicon');
 const { runKnowledgeScoring } = require('../scoring-engine');
 const { buildAlgorithmVisibleProjection } = require('../algorithm-visible-projection');
 
@@ -231,6 +233,30 @@ function createSkillMap(skillContracts) {
       frontend_journeys: result.frontendJourneys,
       state_machines: result.stateMachines,
       aggregate_candidates: result.aggregateCandidates,
+    };
+  });
+
+  addSkill('business_logic_mining_skill', ({ config, inputs }) => {
+    const dataContracts = {
+      apiContracts: ensureArray(inputs.api_contracts),
+      erModel: ensureArray(inputs.er_model),
+      eventCatalog: ensureArray(inputs.event_catalog),
+    };
+    const semantic = {
+      businessTerms: ensureArray(inputs.business_terms),
+      businessActions: ensureArray(inputs.business_actions),
+      stateMachines: ensureArray(inputs.state_machines),
+    };
+    const lexicon = loadBusinessLexicon();
+    const result = deriveBusinessLogicAssets({
+      config,
+      topology: inputs.project_topology || { repos: [] },
+      dataContracts,
+      semantic,
+      lexicon,
+    });
+    return {
+      business_logic_assets: result,
     };
   });
 

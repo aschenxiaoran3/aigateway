@@ -281,7 +281,17 @@ function createSkillMap(skillContracts) {
       stateMachines: ensureArray(inputs.state_machines),
       aggregateCandidates: ensureArray(inputs.aggregate_candidates),
     };
-    const result = deriveDddAssets(config, inputs.project_topology || { repos: [] }, structure, dataContracts, semantic);
+    const businessLogicAssets = inputs.business_logic_assets && typeof inputs.business_logic_assets === 'object'
+      ? inputs.business_logic_assets
+      : {};
+    const result = deriveDddAssets(
+      config,
+      inputs.project_topology || { repos: [] },
+      structure,
+      dataContracts,
+      semantic,
+      { businessLogicAssets }
+    );
     return {
       domain_model: result.domainModel,
       capability_map: result.capabilityMap,

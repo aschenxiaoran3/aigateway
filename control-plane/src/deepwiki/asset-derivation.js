@@ -1118,31 +1118,251 @@ function deriveStateMachines(dataContracts) {
   return uniqueBy([...fromTables, ...fromEvents], (item) => item.entity);
 }
 
+const BUSINESS_ACTION_SOFT_CAP = 128;
+
+function normalizeBusinessActionLabel(text) {
+  const value = normalizeText(text);
+  if (!value) return '';
+  if (value.length < 2) return '';
+  if (value.length > 80) return value.slice(0, 80);
+  return value;
+}
+
+function deriveBusinessActionCandidates(config, topology, structure, dataContracts) {
+  const repos = toArray(topology && topology.repos);
+  const candidates = [];
+  for (const item of toArray(config && config.requirements)) candidates.push(item);
+  for (const item of toArray(dataContracts && dataContracts.apiContracts)) {
+    candidates.push(item && (item.businessAction || item.action));
+  }
+  for (const item of toArray(dataContracts && dataContracts.frontendRequestMap)) {
+    candidates.push(item && item.pageAction);
+  }
+  for (const event of toArray(dataContracts && dataContracts.eventCatalog)) {
+    candidates.push(event && (event.businessAction || event.event));
+  }
+  for (const repo of repos) {
+    for (const method of toArray(repo && repo.test_methods)) {
+      const label = method && (method.description || method.name || method.method);
+      if (label) candidates.push(label);
+    }
+    for (const rule of toArray(repo && repo.rule_comments)) {
+      const text = rule && (rule.text || rule.natural_text);
+      if (text) candidates.push(text);
+    }
+  }
+  for (const symbol of toArray(structure && structure.symbols)) {
+    const kind = normalizeText(symbol && symbol.kind).toLowerCase();
+    if (kind === 'controller' || kind === 'service') {
+      const label = symbol && (symbol.action || symbol.summary || symbol.name);
+      if (label) candidates.push(label);
+    }
+  }
+  const normalized = candidates
+    .map((candidate) => normalizeBusinessActionLabel(candidate))
+    .filter(Boolean);
+  return uniqueStrings(normalized).slice(0, BUSINESS_ACTION_SOFT_CAP);
+}
+
+const MUTATING_HTTP_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+const SIDE_EFFECT_PATH_HINTS = [
+  { pattern: /submit/i, label: '提交到后端处理' },
+  { pattern: /pay|settle|refund/i, label: '资金结算 / 交易落账' },
+  { pattern: /notify|push|dispatch/i, label: '触发下游通知 / 消息' },
+  { pattern: /audit|log/i, label: '写入审计 / 日志' },
+  { pattern: /cancel|revoke|reverse/i, label: '撤销 / 反向操作' },
+];
+
+function methodLabelForRequest(method) {
+  const m = normalizeText(method).toUpperCase();
+  if (m === 'GET') return '查询';
+  if (m === 'POST') return '提交';
+  if (m === 'PUT' || m === 'PATCH') return '更新';
+  if (m === 'DELETE') return '删除';
+  return m || '请求';
+}
+
+function buildApiContractIndex(apiContracts) {
+  const byKey = new Map();
+  for (const contract of toArray(apiContracts)) {
+    const method = normalizeText(contract && contract.method).toUpperCase();
+    const path = normalizeText(contract && contract.path);
+    if (!path) continue;
+    byKey.set(`${method}:${path}`, contract);
+    if (method) byKey.set(`${method}:${path.toLowerCase()}`, contract);
+    byKey.set(`*:${path}`, contract);
+  }
+  return {
+    lookup(method, path) {
+      const normalizedMethod = normalizeText(method).toUpperCase();
+      const normalizedPath = normalizeText(path);
+      if (!normalizedPath) return null;
+      return (
+        byKey.get(`${normalizedMethod}:${normalizedPath}`) ||
+        byKey.get(`${normalizedMethod}:${normalizedPath.toLowerCase()}`) ||
+        byKey.get(`*:${normalizedPath}`) ||
+        null
+      );
+    },
+  };
+}
+
+function buildFrontendJourneySteps(requestMapItem, matchedContract) {
+  const pageAction = normalizeText(requestMapItem && requestMapItem.pageAction) || '前端页面';
+  const request = normalizeText(requestMapItem && requestMapItem.request);
+  const method = request.split(/\s+/)[0] || '';
+  const path = request.split(/\s+/).slice(1).join(' ');
+  const matched = Boolean(requestMapItem && requestMapItem.matched);
+  const steps = [];
+  steps.push({
+    kind: 'open',
+    label: `打开${pageAction}`,
+    detail: pageAction,
+  });
+  const guardHints = toArray(matchedContract && matchedContract.guards);
+  const paramGuards = toArray(matchedContract && matchedContract.requiredParams);
+  const guardLabels = uniqueStrings([
+    ...guardHints.map((hint) => normalizeText(hint)),
+    ...paramGuards.map((param) => normalizeText(param)).filter(Boolean).map((param) => `${param} 必填`),
+  ]);
+  if (guardLabels.length) {
+    steps.push({
+      kind: 'guard',
+      label: `前置校验：${guardLabels.slice(0, 3).join(' / ')}`,
+      details: guardLabels,
+    });
+  }
+  const methodLabel = methodLabelForRequest(method);
+  steps.push({
+    kind: 'request',
+    label: path ? `${methodLabel} ${method} ${path}`.trim() : request || methodLabel,
+    method,
+    path,
+    matched,
+  });
+  const upperMethod = normalizeText(method).toUpperCase();
+  const sideEffects = [];
+  if (MUTATING_HTTP_METHODS.has(upperMethod)) {
+    for (const hint of SIDE_EFFECT_PATH_HINTS) {
+      if (hint.pattern.test(path) || hint.pattern.test(pageAction)) {
+        sideEffects.push(hint.label);
+      }
+    }
+    if (!sideEffects.length) {
+      sideEffects.push(`服务端执行${methodLabel}操作`);
+    }
+  }
+  const contractSideEffects = toArray(matchedContract && matchedContract.sideEffects)
+    .map((effect) => normalizeText(effect))
+    .filter(Boolean);
+  const mergedSideEffects = uniqueStrings([...sideEffects, ...contractSideEffects]);
+  if (mergedSideEffects.length) {
+    steps.push({
+      kind: 'side_effect',
+      label: `服务端副作用：${mergedSideEffects.slice(0, 2).join(' / ')}`,
+      details: mergedSideEffects,
+    });
+  }
+  const branchStates = toArray(matchedContract && matchedContract.states);
+  const branchResponses = toArray(matchedContract && matchedContract.responseBranches);
+  const branchLabels = uniqueStrings([
+    ...branchStates.map((state) => `状态流转 → ${normalizeText(state)}`).filter((s) => s && s !== '状态流转 → '),
+    ...branchResponses.map((branch) => normalizeText(branch)).filter(Boolean),
+  ]);
+  if (branchLabels.length) {
+    steps.push({
+      kind: 'branch',
+      label: branchLabels.length === 1 ? branchLabels[0] : `可能分支：${branchLabels.slice(0, 3).join(' / ')}`,
+      details: branchLabels,
+    });
+  }
+  steps.push({
+    kind: 'response',
+    label: matched ? '后端返回结果' : '后端契约待补齐',
+    matched,
+  });
+  return steps;
+}
+
+function deriveNoTableDomainCandidates(dataContracts) {
+  const apiContracts = toArray(dataContracts && dataContracts.apiContracts);
+  const erModel = toArray(dataContracts && dataContracts.erModel);
+  const eventCatalog = toArray(dataContracts && dataContracts.eventCatalog);
+  if (!apiContracts.length && !eventCatalog.length) return [];
+  const domainsWithTables = new Set(
+    erModel
+      .map((item) => normalizeText(item && item.domainKey))
+      .filter(Boolean)
+  );
+  const clusters = new Map();
+  const addSignal = (domainKey, source, label) => {
+    const key = normalizeText(domainKey);
+    if (!key || domainsWithTables.has(key)) return;
+    if (!clusters.has(key)) {
+      const entry = DOMAIN_KEYWORD_CATALOG.find((item) => item.key === key);
+      clusters.set(key, {
+        name: entry ? compactDomainName(entry.name) : titleFromToken(key),
+        reasons: new Set(),
+        apis: [],
+        events: [],
+        domainKey: key,
+      });
+    }
+    const cluster = clusters.get(key);
+    cluster.reasons.add(source);
+    cluster.reasons.add('no_table');
+    if (source === 'api_cluster' && label) cluster.apis.push(label);
+    if (source === 'event_cluster' && label) cluster.events.push(label);
+  };
+  for (const api of apiContracts) {
+    const probe = [api && api.path, api && api.action, api && api.businessAction, api && api.symbol]
+      .filter(Boolean)
+      .join(' ');
+    const dk = normalizeText(api && api.domainKey) || (detectDomainByValue(probe) || {}).key || '';
+    addSignal(dk, 'api_cluster', `${normalizeText(api.method) || ''} ${normalizeText(api.path) || ''}`.trim());
+  }
+  for (const evt of eventCatalog) {
+    const probe = [evt && evt.event, evt && evt.topic].filter(Boolean).join(' ');
+    const dk = normalizeText(evt && evt.domainKey) || (detectDomainByValue(probe) || {}).key || '';
+    addSignal(dk, 'event_cluster', normalizeText(evt.event) || normalizeText(evt.topic));
+  }
+  return Array.from(clusters.values())
+    .filter((item) => item.apis.length + item.events.length >= 1)
+    .map((item) => ({
+      name: item.name,
+      reasons: Array.from(item.reasons),
+      domainKey: item.domainKey,
+      apis: uniqueStrings(item.apis).slice(0, 8),
+      events: uniqueStrings(item.events).slice(0, 8),
+    }));
+}
+
 function deriveSemanticAssets(config, topology, structure, dataContracts) {
   const businessTerms = extractBusinessTerms(config, dataContracts);
-  const businessActions = uniqueStrings([
-    ...toArray(config && config.requirements),
-    ...toArray(dataContracts.apiContracts).map((item) => item.businessAction || item.action),
-    ...toArray(dataContracts.frontendRequestMap).map((item) => item.pageAction),
-  ]).slice(0, 24);
-  const frontendJourneys = uniqueBy(toArray(dataContracts.frontendRequestMap).map((item) => ({
-    journey: normalizeText(item.pageAction) || '前端旅程',
-    pageId: item.pageId,
-    steps: uniqueStrings([
-      `打开${item.pageAction}`,
-      item.request,
-      item.matched ? '后端返回结果' : '后端契约待补齐',
-    ]),
-    request: item.request,
-    method: normalizeText(item.request).split(/\s+/)[0] || '',
-    path: normalizeText(item.request).split(/\s+/).slice(1).join(' '),
-    consumerRepoId: item.consumerRepoId,
-    providerRepoId: item.providerRepoId,
-    domainKey: item.domainKey,
-    sourceLabel: item.sourceLabel,
-    bindingType: item.bindingType,
-  })), (item) => `${item.consumerRepoId}:${item.pageId}:${item.request}`);
+  const businessActions = deriveBusinessActionCandidates(config, topology, structure, dataContracts);
+  const apiContractIndex = buildApiContractIndex(dataContracts.apiContracts);
+  const frontendJourneys = uniqueBy(toArray(dataContracts.frontendRequestMap).map((item) => {
+    const method = normalizeText(item.request).split(/\s+/)[0] || '';
+    const path = normalizeText(item.request).split(/\s+/).slice(1).join(' ');
+    const matchedContract = apiContractIndex.lookup(method, path);
+    const stepsStructured = buildFrontendJourneySteps(item, matchedContract);
+    return {
+      journey: normalizeText(item.pageAction) || '前端旅程',
+      pageId: item.pageId,
+      steps: uniqueStrings(stepsStructured.map((step) => step.label)),
+      stepsStructured,
+      request: item.request,
+      method,
+      path,
+      consumerRepoId: item.consumerRepoId,
+      providerRepoId: item.providerRepoId,
+      domainKey: item.domainKey,
+      sourceLabel: item.sourceLabel,
+      bindingType: item.bindingType,
+    };
+  }), (item) => `${item.consumerRepoId}:${item.pageId}:${item.request}`);
   const stateMachines = deriveStateMachines(dataContracts);
+  const noTableDomainCandidates = deriveNoTableDomainCandidates(dataContracts);
   const aggregateCandidates = uniqueBy(
     [
       ...toArray(dataContracts.erModel).map((item) => ({
@@ -1159,8 +1379,9 @@ function deriveSemanticAssets(config, topology, structure, dataContracts) {
         name: item.entity,
         reasons: ['has_state_machine'],
       })),
+      ...noTableDomainCandidates,
     ],
-    (item) => item.name
+    (item) => (item.domainKey ? `domain:${item.domainKey}` : `name:${normalizeText(item.name)}`)
   );
   return {
     businessTerms,
@@ -1171,19 +1392,56 @@ function deriveSemanticAssets(config, topology, structure, dataContracts) {
   };
 }
 
-function deriveDddAssets(config, topology, structure, dataContracts, semantic) {
+function deriveDddAssets(config, topology, structure, dataContracts, semantic, options = {}) {
+  const businessLogicAssets = ensureObject(options.businessLogicAssets);
   const explicitDomains = toArray(config && config.domains).map((item) => ensureObject(item));
+  const logicSeedMap = new Map();
+  const addLogicSeed = (domainKey, capability) => {
+    const key = normalizeText(domainKey);
+    if (!key) return;
+    if (!logicSeedMap.has(key)) {
+      const entry = DOMAIN_KEYWORD_CATALOG.find((item) => item.key === key);
+      logicSeedMap.set(key, {
+        key,
+        name: entry ? compactDomainName(entry.name) : titleFromToken(key),
+        capabilities: new Set(),
+      });
+    }
+    const cap = normalizeText(capability);
+    if (cap) logicSeedMap.get(key).capabilities.add(cap);
+  };
+  const logicSources = [
+    ...toArray(businessLogicAssets.business_rules),
+    ...toArray(businessLogicAssets.scenarios),
+    ...toArray(businessLogicAssets.calculations),
+    ...toArray(businessLogicAssets.failure_modes),
+    ...toArray(businessLogicAssets.invariants),
+  ];
+  for (const item of logicSources) {
+    addLogicSeed(
+      item && item.domain_hint,
+      item && (item.natural_text || item.description || item.title || item.name)
+    );
+  }
+  const logicSeeds = Array.from(logicSeedMap.values()).map((entry) => ({
+    key: entry.key,
+    name: entry.name,
+    capabilities: Array.from(entry.capabilities).slice(0, 12),
+  }));
   const domainSeeds = explicitDomains.length
     ? explicitDomains.map((item) => ({
         key: normalizeText(item.key || item.name || item.title),
         name: normalizeText(item.name || item.title || item.key),
         capabilities: uniqueStrings(item.capabilities),
       }))
-    : toArray(semantic.aggregateCandidates).map((item) => ({
-        key: kebabCase(item.name),
-        name: item.name,
-        capabilities: [],
-      }));
+    : [
+        ...toArray(semantic.aggregateCandidates).map((item) => ({
+          key: normalizeText(item.domainKey) || kebabCase(item.name),
+          name: item.name,
+          capabilities: [],
+        })),
+        ...logicSeeds,
+      ];
 
   const domains = uniqueBy(domainSeeds, (item) => item.key || item.name).map((seed) => {
     const domainKey = normalizeText(seed.key || kebabCase(seed.name));
@@ -2607,6 +2865,10 @@ module.exports = {
   deriveStructureAssets,
   deriveDataContractAssets,
   deriveSemanticAssets,
+  deriveBusinessActionCandidates,
+  deriveNoTableDomainCandidates,
+  buildFrontendJourneySteps,
+  buildApiContractIndex,
   deriveDddAssets,
   deriveEvidenceAssets,
   deriveFlowPathAssets,

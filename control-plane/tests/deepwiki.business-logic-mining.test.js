@@ -11,7 +11,9 @@ const { loadBusinessLexicon } = require('../src/deepwiki/business-lexicon');
 const {
   buildBusinessLogicFromInventory,
   renderBusinessLogicPage,
+  buildInventoryEnforcerContext,
 } = require('../src/deepwiki/page-builder');
+const { buildEnforcerContext } = require('../src/deepwiki/citation-enforcer');
 
 test('extractRulesFromComments catches Chinese strong trigger comments with citations', () => {
   const lexicon = loadBusinessLexicon();
@@ -266,6 +268,58 @@ test('renderBusinessLogicPage renders object-shaped side_effects without [object
   assert.ok(!/\[object Object\]/.test(page.content), 'side_effects must not render as [object Object]');
   assert.ok(/OrderPaidEvent/.test(page.content), 'should include event name');
   assert.ok(/audit log written/.test(page.content), 'string side effects pass through');
+});
+
+test('renderBusinessLogicPage in strict mode drops rules whose citations are not allowlisted', () => {
+  const ctx = buildEnforcerContext({
+    allowedPaths: ['src/main/java/order/OrderService.java'],
+    mode: 'strict',
+  });
+  const page = renderBusinessLogicPage(
+    {
+      business_rules: [
+        {
+          id: 'rule-1',
+          natural_text: 'Known path rule',
+          trigger: '必须',
+          confidence: 0.9,
+          citations: [
+            { path: 'src/main/java/order/OrderService.java', line_start: 42, line_end: 42 },
+          ],
+        },
+        {
+          id: 'rule-2',
+          natural_text: 'Unknown path rule',
+          trigger: '必须',
+          confidence: 0.9,
+          citations: [{ path: 'src/main/java/unknown/Ghost.java', line_start: 1, line_end: 1 }],
+        },
+      ],
+      test_evidence: [],
+      state_machines_with_guards: [],
+    },
+    { enforcerContext: ctx },
+  );
+  assert.ok(page, 'strict page should still render when at least one rule survives');
+  assert.equal(page.metadata_json.rule_count, 1, 'second rule should be dropped');
+  assert.equal(page.metadata_json.citation_enforcement.mode, 'strict');
+  assert.equal(page.metadata_json.citation_enforcement.dropped_rules, 1);
+  assert.ok(/Known path rule/.test(page.content));
+  assert.ok(!/Unknown path rule/.test(page.content));
+});
+
+test('buildInventoryEnforcerContext aggregates inventory paths into allowlist', () => {
+  const inventory = {
+    controllers: [{ path: 'src/OrderController.java', class_name: 'OrderController' }],
+    services: [{ path: 'src/OrderService.java', class_name: 'OrderService' }],
+    rule_comments: [{ path: 'src/OrderService.java', line_start: 42, text: 'must be positive' }],
+    test_methods: [{ path: 'test/OrderServiceTest.java', name: 'should_reject_negative_amount' }],
+  };
+  const ctx = buildInventoryEnforcerContext(inventory);
+  assert.ok(ctx, 'context should be built');
+  assert.ok(ctx.allowedFiles.has('src/OrderController.java'));
+  assert.ok(ctx.allowedFiles.has('src/OrderService.java'));
+  assert.ok(ctx.allowedFiles.has('test/OrderServiceTest.java'));
 });
 
 test('renderBusinessLogicPage returns null when no signals exist', () => {

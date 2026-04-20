@@ -366,6 +366,45 @@ function parseJavaClassName(preview) {
   return match ? match[2] : '';
 }
 
+function escapeRegExpLiteral(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function findLineOfMatch(preview, regex) {
+  const text = String(preview || '');
+  if (!text) return null;
+  const match = text.match(regex);
+  if (!match) return null;
+  const offset = typeof match.index === 'number' ? match.index : text.indexOf(match[0]);
+  if (offset < 0) return null;
+  return text.slice(0, offset).split(/\r?\n/).length;
+}
+
+function findJavaClassDefinitionLine(preview, className) {
+  if (!className) {
+    return findLineOfMatch(preview, /\b(class|interface|enum)\s+[A-Za-z0-9_]+/);
+  }
+  const safeName = escapeRegExpLiteral(className);
+  return findLineOfMatch(preview, new RegExp(`\\b(class|interface|enum)\\s+${safeName}\\b`));
+}
+
+function findSqlTableDefinitionLine(preview, tableName) {
+  if (!tableName) return null;
+  const safeName = escapeRegExpLiteral(tableName);
+  return findLineOfMatch(
+    preview,
+    new RegExp(`create\\s+table\\s+(?:if\\s+not\\s+exists\\s+)?[\`"]?${safeName}[\`"]?`, 'i'),
+  );
+}
+
+function annotateWithClassLine(file, className) {
+  const lineStart = findJavaClassDefinitionLine(file.preview, className);
+  if (lineStart && lineStart > 0) {
+    return { line_start: lineStart, line_end: lineStart };
+  }
+  return {};
+}
+
 function hasSourceCodeExtension(filePath) {
   return SOURCE_CODE_EXTENSIONS.has(path.extname(String(filePath || '')).toLowerCase());
 }
@@ -786,11 +825,15 @@ function collectRepositoryInventory(repoPath) {
         /(^|\/)controllers?\//i.test(file.path)
       );
     })
-    .map((file) => ({
-      path: file.path,
-      class_name: parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path)),
-      endpoints: parseRequestMappings(file.preview),
-    }))
+    .map((file) => {
+      const className = parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path));
+      return {
+        path: file.path,
+        class_name: className,
+        endpoints: parseRequestMappings(file.preview),
+        ...annotateWithClassLine(file, className),
+      };
+    })
     .slice(0, 24);
 
   const services = sourceCodeFiles
@@ -804,10 +847,10 @@ function collectRepositoryInventory(repoPath) {
         /(^|\/)services?\//i.test(file.path)
       );
     })
-    .map((file) => ({
-      path: file.path,
-      class_name: parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path)),
-    }))
+    .map((file) => {
+      const className = parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path));
+      return { path: file.path, class_name: className, ...annotateWithClassLine(file, className) };
+    })
     .slice(0, 24);
 
   const repositories = sourceCodeFiles
@@ -821,10 +864,10 @@ function collectRepositoryInventory(repoPath) {
         /(^|\/)(repositories|repository|dao|mapper)s?\//i.test(file.path)
       );
     })
-    .map((file) => ({
-      path: file.path,
-      class_name: parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path)),
-    }))
+    .map((file) => {
+      const className = parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path));
+      return { path: file.path, class_name: className, ...annotateWithClassLine(file, className) };
+    })
     .slice(0, 24);
 
   const requestModels = sourceCodeFiles
@@ -832,10 +875,10 @@ function collectRepositoryInventory(repoPath) {
       const className = parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path));
       return /(^|\/)requests?\//i.test(file.path) || /Request$/.test(className);
     })
-    .map((file) => ({
-      path: file.path,
-      class_name: parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path)),
-    }))
+    .map((file) => {
+      const className = parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path));
+      return { path: file.path, class_name: className, ...annotateWithClassLine(file, className) };
+    })
     .slice(0, 36);
 
   const dtoModels = sourceCodeFiles
@@ -843,10 +886,10 @@ function collectRepositoryInventory(repoPath) {
       const className = parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path));
       return /(^|\/)dtos?\//i.test(file.path) || /Dto$/.test(className);
     })
-    .map((file) => ({
-      path: file.path,
-      class_name: parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path)),
-    }))
+    .map((file) => {
+      const className = parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path));
+      return { path: file.path, class_name: className, ...annotateWithClassLine(file, className) };
+    })
     .slice(0, 36);
 
   const voModels = sourceCodeFiles
@@ -854,10 +897,10 @@ function collectRepositoryInventory(repoPath) {
       const className = parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path));
       return /(^|\/)vos?\//i.test(file.path) || /VO$/.test(className) || /Vo$/.test(className);
     })
-    .map((file) => ({
-      path: file.path,
-      class_name: parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path)),
-    }))
+    .map((file) => {
+      const className = parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path));
+      return { path: file.path, class_name: className, ...annotateWithClassLine(file, className) };
+    })
     .slice(0, 36);
 
   const criteriaModels = sourceCodeFiles
@@ -865,10 +908,10 @@ function collectRepositoryInventory(repoPath) {
       const className = parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path));
       return /(^|\/)criteria\//i.test(file.path) || /Criteria$/.test(className);
     })
-    .map((file) => ({
-      path: file.path,
-      class_name: parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path)),
-    }))
+    .map((file) => {
+      const className = parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path));
+      return { path: file.path, class_name: className, ...annotateWithClassLine(file, className) };
+    })
     .slice(0, 36);
 
   const mapperModels = sourceCodeFiles
@@ -876,10 +919,10 @@ function collectRepositoryInventory(repoPath) {
       const className = parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path));
       return /(^|\/)mappers?\//i.test(file.path) || /Mapper$/.test(className);
     })
-    .map((file) => ({
-      path: file.path,
-      class_name: parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path)),
-    }))
+    .map((file) => {
+      const className = parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path));
+      return { path: file.path, class_name: className, ...annotateWithClassLine(file, className) };
+    })
     .slice(0, 36);
 
   const entities = sourceCodeFiles
@@ -894,11 +937,15 @@ function collectRepositoryInventory(repoPath) {
         Boolean(parseEntityTableName(file.preview))
       );
     })
-    .map((file) => ({
-      path: file.path,
-      class_name: parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path)),
-      table_name: parseEntityTableName(file.preview) || '',
-    }))
+    .map((file) => {
+      const className = parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path));
+      return {
+        path: file.path,
+        class_name: className,
+        table_name: parseEntityTableName(file.preview) || '',
+        ...annotateWithClassLine(file, className),
+      };
+    })
     .slice(0, 36);
 
   const feignClients = sourceCodeFiles
@@ -912,10 +959,10 @@ function collectRepositoryInventory(repoPath) {
         /(^|\/)(feign|clients?)\//i.test(file.path)
       );
     })
-    .map((file) => ({
-      path: file.path,
-      class_name: parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path)),
-    }))
+    .map((file) => {
+      const className = parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path));
+      return { path: file.path, class_name: className, ...annotateWithClassLine(file, className) };
+    })
     .slice(0, 24);
 
   const sqlTables = readableFiles
@@ -923,19 +970,27 @@ function collectRepositoryInventory(repoPath) {
     .flatMap((file) => {
       const parsed = parseSqlTableDefinitions(file.preview);
       if (parsed.length) {
-        return parsed.map((definition) => ({
-          path: file.path,
-          table_name: definition.table_name,
-          columns: definition.columns,
-          references: definition.references,
-        }));
+        return parsed.map((definition) => {
+          const lineStart = findSqlTableDefinitionLine(file.preview, definition.table_name);
+          return {
+            path: file.path,
+            table_name: definition.table_name,
+            columns: definition.columns,
+            references: definition.references,
+            ...(lineStart ? { line_start: lineStart, line_end: lineStart } : {}),
+          };
+        });
       }
-      return parseSqlTableNames(file.preview).map((tableName) => ({
-        path: file.path,
-        table_name: tableName,
-        columns: [],
-        references: [],
-      }));
+      return parseSqlTableNames(file.preview).map((tableName) => {
+        const lineStart = findSqlTableDefinitionLine(file.preview, tableName);
+        return {
+          path: file.path,
+          table_name: tableName,
+          columns: [],
+          references: [],
+          ...(lineStart ? { line_start: lineStart, line_end: lineStart } : {}),
+        };
+      });
     })
     .slice(0, 40);
 
@@ -1301,7 +1356,7 @@ function collectProjectManifestInventory(repoUnits = []) {
     ).slice(0, 200),
     test_methods: mergeUniqueObjects(
       inventories.flatMap((item) => item.test_methods || []),
-      (item) => `${item.path}:${item.class_name || ''}:${item.method_name || ''}`
+      (item) => `${item.path}:${item.name || ''}:${item.line_start || ''}`
     ).slice(0, 200),
     api_endpoints: uniqueBy(inventories.flatMap((item) => item.api_endpoints || []), (item) => item).slice(0, 80),
     deploy_files: uniqueBy(inventories.flatMap((item) => item.deploy_files || []), (item) => item).slice(0, 40),

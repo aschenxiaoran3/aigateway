@@ -1,5 +1,11 @@
 const { deriveBusinessLogicAssets } = require('./business-logic-mining');
 const { loadBusinessLexicon } = require('./business-lexicon');
+const {
+  buildEnforcerContext,
+  enforceCitations,
+  formatCitationString,
+  DEFAULT_MODE: DEFAULT_CITATION_MODE,
+} = require('./citation-enforcer');
 
 function createBuildDeepWikiPages(deps = {}) {
   const {
@@ -237,7 +243,8 @@ function createBuildDeepWikiPages(deps = {}) {
       ].join('\n'),
     });
 
-    const businessLogicPage = renderBusinessLogicPage(resolvedBusinessLogic);
+    const enforcerContext = buildInventoryEnforcerContext(inventory);
+    const businessLogicPage = renderBusinessLogicPage(resolvedBusinessLogic, { enforcerContext });
     if (businessLogicPage) {
       pushPage(businessLogicPage);
     }
@@ -934,27 +941,121 @@ function buildBusinessLogicFromInventory(inventory) {
   }
 }
 
+function buildInventoryEnforcerContext(inventory) {
+  if (!inventory || typeof inventory !== 'object') return null;
+  const allowedPaths = new Set();
+  const pushAll = (arr, key = 'path') => {
+    if (!Array.isArray(arr)) return;
+    for (const item of arr) {
+      if (!item) continue;
+      if (typeof item === 'string') {
+        allowedPaths.add(item);
+      } else if (typeof item === 'object' && item[key]) {
+        allowedPaths.add(item[key]);
+      }
+    }
+  };
+  pushAll(inventory.sample_tree);
+  pushAll(inventory.controllers);
+  pushAll(inventory.services);
+  pushAll(inventory.repositories);
+  pushAll(inventory.entities);
+  pushAll(inventory.mapper_models);
+  pushAll(inventory.dto_models);
+  pushAll(inventory.vo_models);
+  pushAll(inventory.request_models);
+  pushAll(inventory.criteria_models);
+  pushAll(inventory.feign_clients);
+  pushAll(inventory.sql_tables);
+  pushAll(inventory.rule_comments);
+  pushAll(inventory.test_methods);
+  pushAll(inventory.docs);
+  pushAll(inventory.frontend_pages);
+  pushAll(inventory.test_files);
+  if (allowedPaths.size === 0) return null;
+  return buildEnforcerContext({
+    allowedPaths: Array.from(allowedPaths),
+    mode: process.env.DEEPWIKI_CITATION_MODE === 'strict' ? 'strict' : DEFAULT_CITATION_MODE,
+  });
+}
+
 function formatCitation(citation) {
-  if (!citation || typeof citation !== 'object') return '';
-  const { path: p, line_start: ls, line_end: le } = citation;
-  if (!p) return '';
-  if (ls && le && ls !== le) return `${p}:L${ls}-L${le}`;
-  if (ls) return `${p}:L${ls}`;
-  return p;
+  return formatCitationString(citation);
 }
 
 function formatCitations(citations) {
   if (!Array.isArray(citations)) return '';
-  const rendered = citations.map(formatCitation).filter(Boolean);
+  const rendered = citations.map((c) => formatCitationString(c)).filter(Boolean);
   if (!rendered.length) return '';
   return rendered.slice(0, 3).join('、');
 }
 
-function renderBusinessLogicPage(assets) {
+function filterCitations(citations, ctx) {
+  if (!Array.isArray(citations) || citations.length === 0) return { accepted: [], rejected: [], downgraded: [] };
+  if (!ctx) {
+    return {
+      accepted: citations.filter((c) => c && typeof c === 'object' && c.path),
+      rejected: [],
+      downgraded: [],
+    };
+  }
+  return enforceCitations(citations, ctx);
+}
+
+function enforceCitation(citation, ctx) {
+  if (!ctx) return citation && typeof citation === 'object' && citation.path ? citation : null;
+  const result = enforceCitations([citation], ctx);
+  return result.accepted[0] || null;
+}
+
+function renderBusinessLogicPage(assets, options = {}) {
   if (!assets || typeof assets !== 'object') return null;
-  const rules = Array.isArray(assets.business_rules) ? assets.business_rules : [];
-  const testEvidence = Array.isArray(assets.test_evidence) ? assets.test_evidence : [];
-  const stateMachines = Array.isArray(assets.state_machines_with_guards) ? assets.state_machines_with_guards : [];
+  const ctx = options.enforcerContext || null;
+  const rulesInput = Array.isArray(assets.business_rules) ? assets.business_rules : [];
+  const testEvidenceInput = Array.isArray(assets.test_evidence) ? assets.test_evidence : [];
+  const stateMachinesInput = Array.isArray(assets.state_machines_with_guards) ? assets.state_machines_with_guards : [];
+
+  const manifest = { dropped_rules: 0, dropped_tests: 0, dropped_transitions: 0, downgraded: 0 };
+
+  const filterRecord = (record) => {
+    const accepted = filterCitations(record.citations, ctx);
+    manifest.downgraded += accepted.downgraded.length;
+    if (ctx && ctx.mode === 'strict' && accepted.accepted.length === 0) return null;
+    return { ...record, citations: accepted.accepted };
+  };
+
+  const rules = rulesInput
+    .map((rule) => {
+      const filtered = filterRecord(rule);
+      if (!filtered) manifest.dropped_rules += 1;
+      return filtered;
+    })
+    .filter(Boolean);
+
+  const testEvidence = testEvidenceInput
+    .map((evidence) => {
+      const filtered = filterRecord(evidence);
+      if (!filtered) manifest.dropped_tests += 1;
+      return filtered;
+    })
+    .filter(Boolean);
+
+  const stateMachines = stateMachinesInput.map((machine) => {
+    const transitions = Array.isArray(machine.transitions)
+      ? machine.transitions
+          .map((t) => {
+            const cite = enforceCitation(t.citation, ctx);
+            if (ctx && ctx.mode === 'strict' && t.citation && !cite) {
+              manifest.dropped_transitions += 1;
+              return null;
+            }
+            return { ...t, citation: cite || t.citation || null };
+          })
+          .filter(Boolean)
+      : [];
+    return { ...machine, transitions };
+  });
+
   if (!rules.length && !testEvidence.length && !stateMachines.length) {
     return null;
   }
@@ -1056,6 +1157,10 @@ function renderBusinessLogicPage(assets) {
       rule_count: rules.length,
       test_evidence_count: testEvidence.length,
       state_machine_count: stateMachines.length,
+      citation_enforcement: {
+        mode: ctx ? ctx.mode : 'unenforced',
+        ...manifest,
+      },
       summary,
     },
   };
@@ -1081,4 +1186,5 @@ module.exports = {
   createBuildDeepWikiPages,
   buildBusinessLogicFromInventory,
   renderBusinessLogicPage,
+  buildInventoryEnforcerContext,
 };

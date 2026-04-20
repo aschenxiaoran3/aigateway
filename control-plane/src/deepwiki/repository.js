@@ -1064,7 +1064,7 @@ function collectRepositoryInventory(repoPath) {
   };
 }
 
-const RULE_TRIGGER_REGEX = /必须|不得|禁止|只允许|仅限|至少|至多|最多|最少|不能|不允许|必填|应当|约束|\bmust\s+not\b|\bmust\b|\brequired\b|\bmandatory\b|\bforbidden\b|\bonly\b\s+(?:if|when|allow)|\bcannot\b|\bat\s+least\b|\bat\s+most\b/i;
+const RULE_TRIGGER_REGEX = /必须|不得|禁止|只允许|仅限|至少|至多|最多|最少|不能|不允许|必填|要求|应当|约束|\bmust\s*n(?:o|')?t\b|\bmust\b|\brequired\b|\bmandatory\b|\bforbidden\b|\bnot\s+allowed\b|\bonly\b|\bcannot\b|\bat\s+least\b|\bat\s+most\b|\bno\s+more\s+than\b|\bno\s+less\s+than\b/i;
 
 function collectRuleCommentRecords(readableFiles) {
   const records = [];

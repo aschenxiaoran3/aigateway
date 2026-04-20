@@ -14465,9 +14465,18 @@ async function createDeepWikiRunRequest(data = {}, options = {}) {
 
   const pipeline = await ensureDeepWikiPipeline();
   const traceId = `trace-deepwiki-${uuidv4().replace(/-/g, '').slice(0, 16)}`;
+  // DeepWiki runs always belong to a DeepWiki project (manifest.project).
+  // Earlier only data.project_code (request body) was threaded through, so
+  // runs created from workbench/regenerate buttons — which do not include
+  // project_code in the body — landed in gateway_pipeline_runs with a NULL
+  // project_code and showed blank in the ThinCore orchestration table.
+  const resolvedProjectCode =
+    normalizeText(data.project_code)
+    || normalizeText(manifest.project?.project_code)
+    || null;
   const pipelineRun = await startPipelineRun(pipeline.id, {
     trace_id: traceId,
-    project_code: data.project_code || null,
+    project_code: resolvedProjectCode,
     source_type: 'manual',
     entry_event: 'deepwiki-pipeline-v1',
     status: 'queued',

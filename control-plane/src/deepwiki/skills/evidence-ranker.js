@@ -73,8 +73,18 @@ function inferNoisePenalty(source) {
   return 0;
 }
 
-function inferTestPenalty(source) {
-  return /test|spec|mockmvc|fixture|__tests__|itest/i.test(normalizeText(source)) ? 1 : 0;
+function inferTestBoost(source) {
+  const normalized = normalizeText(source).toLowerCase();
+  // Mock / fixture / sample / demo stubs are still penalized via inferNoisePenalty.
+  // Genuine tests (Given-When-Then test methods, spec files, integration tests)
+  // are a high-signal source of business rules: invert the historical penalty
+  // into a modest positive weight so business evidence anchored in tests is
+  // surfaced rather than suppressed.
+  // Exclude mock/fixture/sample/demo/stub paths from the boost, but allow
+  // MockMvc integration tests (which happen to contain "mock" as a substring)
+  // through — they are genuine tests and should still score.
+  if (/mock|fixture|sample|demo|stub/.test(normalized) && !/mockmvc/.test(normalized)) return 0;
+  return /\btest\b|\bspec\b|mockmvc|__tests__|itest|\.test\.|\.spec\.|\/tests?\//i.test(normalizeText(source)) ? 1 : 0;
 }
 
 function scoreEvidence(item, index) {
@@ -85,7 +95,7 @@ function scoreEvidence(item, index) {
   const apiLink = inferApiLink(item);
   const diversityBoost = clamp(item.diversityBoost ?? item.diversity_boost ?? (type === 'event' || type === 'table' ? 0.1 : 0.04), 0, 0.2);
   const repoSpan = clamp(item.repoSpan ?? item.repo_span ?? (normalizeText(item.repoId || item.repo_id) ? 0.06 : 0), 0, 0.12);
-  const testPenalty = inferTestPenalty(source);
+  const testBoost = inferTestBoost(source);
   const noisePenalty = inferNoisePenalty(source);
   const freshnessDecay = clamp(index * 0.003, 0, 0.08);
   const finalScore = Number(
@@ -94,8 +104,8 @@ function scoreEvidence(item, index) {
       centrality * 0.2 +
       apiLink * 0.2 +
       diversityBoost +
-      repoSpan -
-      testPenalty * 0.5 -
+      repoSpan +
+      testBoost * 0.15 -
       noisePenalty -
       freshnessDecay
     ).toFixed(4)
@@ -111,7 +121,8 @@ function scoreEvidence(item, index) {
       api_link: apiLink,
       diversity_boost: diversityBoost,
       repo_span: repoSpan,
-      test_penalty: testPenalty ? -0.5 : 0,
+      test_boost: testBoost ? 0.15 : 0,
+      test_penalty: 0, // kept for back-compat (runtime.js reads it); tests are no longer penalized.
       noise_penalty: noisePenalty ? -noisePenalty : 0,
       freshness_decay: freshnessDecay ? -freshnessDecay : 0,
     },

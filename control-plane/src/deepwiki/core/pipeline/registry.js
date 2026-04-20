@@ -3,6 +3,7 @@ const STAGE_ORDER = [
   'structure_extraction',
   'data_contract_extraction',
   'semantic_mining',
+  'business_logic_mining',
   'ddd_mapping',
   'evidence_ranking_binding',
   'diagram_composition',

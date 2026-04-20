@@ -6225,6 +6225,41 @@ async function listKnowledgeAssets(options = {}) {
   return rows.map(mapKnowledgeAssetRow);
 }
 
+const KNOWLEDGE_ASSET_INGEST_PASSTHROUGH_KEYS = Object.freeze([
+  'repo_url',
+  'repo_slug',
+  'branch',
+  'commit_sha',
+  'page_slug',
+  'page_type',
+  'run_id',
+  'source_files',
+  'object_keys',
+  'thread_key',
+  'thread_level',
+  'domain_key',
+]);
+
+function buildKnowledgeAssetIngestMetadata(asset, assetMeta = {}) {
+  const metadata = {
+    knowledge_asset_id: asset?.id ?? null,
+    asset_key: asset?.asset_key ?? null,
+    asset_name: asset?.name ?? null,
+    asset_category: asset?.asset_category || null,
+    domain: asset?.domain || null,
+    module: asset?.module || null,
+    version: asset?.version || null,
+    owner: asset?.owner || null,
+    source_uri: asset?.source_uri || null,
+  };
+  for (const key of KNOWLEDGE_ASSET_INGEST_PASSTHROUGH_KEYS) {
+    if (assetMeta && assetMeta[key] !== undefined) {
+      metadata[key] = assetMeta[key];
+    }
+  }
+  return metadata;
+}
+
 async function ingestKnowledgeAsset(id, options = {}) {
   const asset = await getKnowledgeAssetById(id);
   if (!asset) return null;
@@ -6235,32 +6270,7 @@ async function ingestKnowledgeAsset(id, options = {}) {
   const ingestUrl = (process.env.KNOWLEDGE_BASE_INGEST_URL || 'http://127.0.0.1:8000/api/v1/ingest').trim();
   const collection = options.collection || resolveKnowledgeCollection(asset);
   const assetMeta = parseJson(asset.metadata_json, {});
-  const passthroughKeys = [
-    'repo_url',
-    'repo_slug',
-    'branch',
-    'commit_sha',
-    'page_slug',
-    'page_type',
-    'run_id',
-    'source_files',
-  ];
-  const metadata = {
-    knowledge_asset_id: asset.id,
-    asset_key: asset.asset_key,
-    asset_name: asset.name,
-    asset_category: asset.asset_category || null,
-    domain: asset.domain || null,
-    module: asset.module || null,
-    version: asset.version || null,
-    owner: asset.owner || null,
-    source_uri: asset.source_uri || null,
-  };
-  for (const key of passthroughKeys) {
-    if (assetMeta[key] !== undefined) {
-      metadata[key] = assetMeta[key];
-    }
-  }
+  const metadata = buildKnowledgeAssetIngestMetadata(asset, assetMeta);
 
   try {
     const response = await axios.post(
@@ -14465,9 +14475,18 @@ async function createDeepWikiRunRequest(data = {}, options = {}) {
 
   const pipeline = await ensureDeepWikiPipeline();
   const traceId = `trace-deepwiki-${uuidv4().replace(/-/g, '').slice(0, 16)}`;
+  // DeepWiki runs always belong to a DeepWiki project (manifest.project).
+  // Earlier only data.project_code (request body) was threaded through, so
+  // runs created from workbench/regenerate buttons — which do not include
+  // project_code in the body — landed in gateway_pipeline_runs with a NULL
+  // project_code and showed blank in the ThinCore orchestration table.
+  const resolvedProjectCode =
+    normalizeText(data.project_code)
+    || normalizeText(manifest.project?.project_code)
+    || null;
   const pipelineRun = await startPipelineRun(pipeline.id, {
     trace_id: traceId,
-    project_code: data.project_code || null,
+    project_code: resolvedProjectCode,
     source_type: 'manual',
     entry_event: 'deepwiki-pipeline-v1',
     status: 'queued',
@@ -15520,9 +15539,17 @@ async function executeDeepWikiRun(runId) {
   await runStage('knowledge_register', async () => {
     await query('DELETE FROM gateway_deepwiki_pages WHERE run_id = ?', [runId]);
     const pageMetadataBySlug = {};
+    const graphPageObjectKeys = getRecordLike(knowledgeGraph?.page_object_keys, {});
     pages.forEach((page) => {
+      const graphKeys = Array.isArray(graphPageObjectKeys[page.page_slug])
+        ? graphPageObjectKeys[page.page_slug]
+        : [];
+      const existingKeys = Array.isArray(page.metadata_json?.object_keys)
+        ? page.metadata_json.object_keys
+        : [];
       pageMetadataBySlug[page.page_slug] = {
         ...(page.metadata_json || {}),
+        object_keys: uniqueStrings([...existingKeys, ...graphKeys].map((item) => String(item || '')).filter(Boolean)),
       };
     });
     const threadByKey = new Map(threadRecords.map((item) => [item.thread_key, item]));
@@ -15532,9 +15559,10 @@ async function executeDeepWikiRun(runId) {
       if (!threadKey) return;
       const thread = threadByKey.get(threadKey);
       if (!thread) return;
+      const threadKeys = Array.isArray(thread.object_keys_json) ? thread.object_keys_json : [];
       pageMetadataBySlug[page.page_slug] = {
         ...meta,
-        object_keys: Array.isArray(thread.object_keys_json) ? thread.object_keys_json : [],
+        object_keys: uniqueStrings([...(meta.object_keys || []), ...threadKeys].map((item) => String(item || '')).filter(Boolean)),
       };
     });
     const graphSummary = await persistDeepWikiKnowledgeGraph(run, knowledgeGraph || { objects: [], relations: [], page_object_keys: {} }, pageMetadataBySlug);
@@ -15552,7 +15580,7 @@ async function executeDeepWikiRun(runId) {
         owner: 'deepwiki-pipeline',
         source_uri: storedSourceUri,
         metadata_json: {
-          ...page.metadata_json,
+          ...nextMetadata,
           collection: DEFAULT_DEEPWIKI_COLLECTION,
           run_id: runId,
           trace_id: run.trace_id,
@@ -16175,6 +16203,8 @@ module.exports = {
   getGovernanceAcceptanceOverview,
   listKnowledgeAssets,
   ingestKnowledgeAsset,
+  buildKnowledgeAssetIngestMetadata,
+  KNOWLEDGE_ASSET_INGEST_PASSTHROUGH_KEYS,
   getGatewaySettings,
   createDeepWikiRunRequest,
   requestDeepWikiSync,

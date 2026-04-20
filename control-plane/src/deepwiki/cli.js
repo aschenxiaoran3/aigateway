@@ -7,6 +7,7 @@ require('./stages/repo/run');
 require('./stages/structure/run');
 require('./stages/data/run');
 require('./stages/semantic/run');
+require('./stages/business-logic/run');
 require('./stages/ddd/run');
 require('./stages/evidence/run');
 require('./stages/diagram/run');

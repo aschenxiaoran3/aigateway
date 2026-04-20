@@ -10,6 +10,8 @@ logs/
 dist/
 coverage/
 data/
+!control-plane/src/deepwiki/stages/data/
+!control-plane/src/deepwiki/stages/data/**
 storage/
 !control-plane/src/deepwiki/core/storage/
 !control-plane/src/deepwiki/core/storage/file-store.js

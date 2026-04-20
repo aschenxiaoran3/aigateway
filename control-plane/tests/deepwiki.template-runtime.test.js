@@ -10,8 +10,8 @@ const { planDag } = require('../src/deepwiki/core/pipeline/engine');
 const { syncTemplateProjection, readSnapshotProjection } = require('../src/deepwiki/runtime');
 const { deriveEvidenceAssets, deriveQualityAssets } = require('../src/deepwiki/asset-derivation');
 
-test('template contracts expose the 10-stage pipeline and DAG-native skill contracts', () => {
-  assert.equal(STAGE_CONTRACTS.length, 10);
+test('template contracts expose the 11-stage pipeline and DAG-native skill contracts', () => {
+  assert.equal(STAGE_CONTRACTS.length, 11);
   assert.deepEqual(
     STAGE_CONTRACTS.map((item) => item.stageKey),
     [
@@ -19,6 +19,7 @@ test('template contracts expose the 10-stage pipeline and DAG-native skill contr
       'structure_extraction',
       'data_contract_extraction',
       'semantic_mining',
+      'business_logic_mining',
       'ddd_mapping',
       'evidence_ranking_binding',
       'diagram_composition',

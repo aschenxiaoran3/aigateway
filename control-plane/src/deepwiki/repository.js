@@ -366,6 +366,45 @@ function parseJavaClassName(preview) {
   return match ? match[2] : '';
 }
 
+function escapeRegExpLiteral(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function findLineOfMatch(preview, regex) {
+  const text = String(preview || '');
+  if (!text) return null;
+  const match = text.match(regex);
+  if (!match) return null;
+  const offset = typeof match.index === 'number' ? match.index : text.indexOf(match[0]);
+  if (offset < 0) return null;
+  return text.slice(0, offset).split(/\r?\n/).length;
+}
+
+function findJavaClassDefinitionLine(preview, className) {
+  if (!className) {
+    return findLineOfMatch(preview, /\b(class|interface|enum)\s+[A-Za-z0-9_]+/);
+  }
+  const safeName = escapeRegExpLiteral(className);
+  return findLineOfMatch(preview, new RegExp(`\\b(class|interface|enum)\\s+${safeName}\\b`));
+}
+
+function findSqlTableDefinitionLine(preview, tableName) {
+  if (!tableName) return null;
+  const safeName = escapeRegExpLiteral(tableName);
+  return findLineOfMatch(
+    preview,
+    new RegExp(`create\\s+table\\s+(?:if\\s+not\\s+exists\\s+)?[\`"]?${safeName}[\`"]?`, 'i'),
+  );
+}
+
+function annotateWithClassLine(file, className) {
+  const lineStart = findJavaClassDefinitionLine(file.preview, className);
+  if (lineStart && lineStart > 0) {
+    return { line_start: lineStart, line_end: lineStart };
+  }
+  return {};
+}
+
 function hasSourceCodeExtension(filePath) {
   return SOURCE_CODE_EXTENSIONS.has(path.extname(String(filePath || '')).toLowerCase());
 }
@@ -732,6 +771,10 @@ function collectRepositoryInventory(repoPath) {
 
   const sourceCodeFiles = readableFiles.filter((file) => hasSourceCodeExtension(file.path));
 
+  const ruleComments = collectRuleCommentRecords(readableFiles);
+  const testMethods = collectTestMethodRecords(readableFiles);
+  const businessSignals = collectBusinessLogicSignals(readableFiles);
+
   const categorizedModules = Array.from(moduleBuckets.entries())
     .map(([name, files]) => {
       const sorted = files.slice().sort((a, b) => a.path.localeCompare(b.path));
@@ -783,11 +826,15 @@ function collectRepositoryInventory(repoPath) {
         /(^|\/)controllers?\//i.test(file.path)
       );
     })
-    .map((file) => ({
-      path: file.path,
-      class_name: parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path)),
-      endpoints: parseRequestMappings(file.preview),
-    }))
+    .map((file) => {
+      const className = parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path));
+      return {
+        path: file.path,
+        class_name: className,
+        endpoints: parseRequestMappings(file.preview),
+        ...annotateWithClassLine(file, className),
+      };
+    })
     .slice(0, 24);
 
   const services = sourceCodeFiles
@@ -801,10 +848,10 @@ function collectRepositoryInventory(repoPath) {
         /(^|\/)services?\//i.test(file.path)
       );
     })
-    .map((file) => ({
-      path: file.path,
-      class_name: parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path)),
-    }))
+    .map((file) => {
+      const className = parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path));
+      return { path: file.path, class_name: className, ...annotateWithClassLine(file, className) };
+    })
     .slice(0, 24);
 
   const repositories = sourceCodeFiles
@@ -818,10 +865,10 @@ function collectRepositoryInventory(repoPath) {
         /(^|\/)(repositories|repository|dao|mapper)s?\//i.test(file.path)
       );
     })
-    .map((file) => ({
-      path: file.path,
-      class_name: parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path)),
-    }))
+    .map((file) => {
+      const className = parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path));
+      return { path: file.path, class_name: className, ...annotateWithClassLine(file, className) };
+    })
     .slice(0, 24);
 
   const requestModels = sourceCodeFiles
@@ -829,10 +876,10 @@ function collectRepositoryInventory(repoPath) {
       const className = parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path));
       return /(^|\/)requests?\//i.test(file.path) || /Request$/.test(className);
     })
-    .map((file) => ({
-      path: file.path,
-      class_name: parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path)),
-    }))
+    .map((file) => {
+      const className = parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path));
+      return { path: file.path, class_name: className, ...annotateWithClassLine(file, className) };
+    })
     .slice(0, 36);
 
   const dtoModels = sourceCodeFiles
@@ -840,10 +887,10 @@ function collectRepositoryInventory(repoPath) {
       const className = parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path));
       return /(^|\/)dtos?\//i.test(file.path) || /Dto$/.test(className);
     })
-    .map((file) => ({
-      path: file.path,
-      class_name: parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path)),
-    }))
+    .map((file) => {
+      const className = parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path));
+      return { path: file.path, class_name: className, ...annotateWithClassLine(file, className) };
+    })
     .slice(0, 36);
 
   const voModels = sourceCodeFiles
@@ -851,10 +898,10 @@ function collectRepositoryInventory(repoPath) {
       const className = parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path));
       return /(^|\/)vos?\//i.test(file.path) || /VO$/.test(className) || /Vo$/.test(className);
     })
-    .map((file) => ({
-      path: file.path,
-      class_name: parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path)),
-    }))
+    .map((file) => {
+      const className = parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path));
+      return { path: file.path, class_name: className, ...annotateWithClassLine(file, className) };
+    })
     .slice(0, 36);
 
   const criteriaModels = sourceCodeFiles
@@ -862,10 +909,10 @@ function collectRepositoryInventory(repoPath) {
       const className = parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path));
       return /(^|\/)criteria\//i.test(file.path) || /Criteria$/.test(className);
     })
-    .map((file) => ({
-      path: file.path,
-      class_name: parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path)),
-    }))
+    .map((file) => {
+      const className = parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path));
+      return { path: file.path, class_name: className, ...annotateWithClassLine(file, className) };
+    })
     .slice(0, 36);
 
   const mapperModels = sourceCodeFiles
@@ -873,10 +920,10 @@ function collectRepositoryInventory(repoPath) {
       const className = parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path));
       return /(^|\/)mappers?\//i.test(file.path) || /Mapper$/.test(className);
     })
-    .map((file) => ({
-      path: file.path,
-      class_name: parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path)),
-    }))
+    .map((file) => {
+      const className = parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path));
+      return { path: file.path, class_name: className, ...annotateWithClassLine(file, className) };
+    })
     .slice(0, 36);
 
   const entities = sourceCodeFiles
@@ -891,11 +938,15 @@ function collectRepositoryInventory(repoPath) {
         Boolean(parseEntityTableName(file.preview))
       );
     })
-    .map((file) => ({
-      path: file.path,
-      class_name: parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path)),
-      table_name: parseEntityTableName(file.preview) || '',
-    }))
+    .map((file) => {
+      const className = parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path));
+      return {
+        path: file.path,
+        class_name: className,
+        table_name: parseEntityTableName(file.preview) || '',
+        ...annotateWithClassLine(file, className),
+      };
+    })
     .slice(0, 36);
 
   const feignClients = sourceCodeFiles
@@ -909,10 +960,10 @@ function collectRepositoryInventory(repoPath) {
         /(^|\/)(feign|clients?)\//i.test(file.path)
       );
     })
-    .map((file) => ({
-      path: file.path,
-      class_name: parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path)),
-    }))
+    .map((file) => {
+      const className = parseJavaClassName(file.preview) || path.basename(file.path, path.extname(file.path));
+      return { path: file.path, class_name: className, ...annotateWithClassLine(file, className) };
+    })
     .slice(0, 24);
 
   const sqlTables = readableFiles
@@ -920,19 +971,27 @@ function collectRepositoryInventory(repoPath) {
     .flatMap((file) => {
       const parsed = parseSqlTableDefinitions(file.preview);
       if (parsed.length) {
-        return parsed.map((definition) => ({
-          path: file.path,
-          table_name: definition.table_name,
-          columns: definition.columns,
-          references: definition.references,
-        }));
+        return parsed.map((definition) => {
+          const lineStart = findSqlTableDefinitionLine(file.preview, definition.table_name);
+          return {
+            path: file.path,
+            table_name: definition.table_name,
+            columns: definition.columns,
+            references: definition.references,
+            ...(lineStart ? { line_start: lineStart, line_end: lineStart } : {}),
+          };
+        });
       }
-      return parseSqlTableNames(file.preview).map((tableName) => ({
-        path: file.path,
-        table_name: tableName,
-        columns: [],
-        references: [],
-      }));
+      return parseSqlTableNames(file.preview).map((tableName) => {
+        const lineStart = findSqlTableDefinitionLine(file.preview, tableName);
+        return {
+          path: file.path,
+          table_name: tableName,
+          columns: [],
+          references: [],
+          ...(lineStart ? { line_start: lineStart, line_end: lineStart } : {}),
+        };
+      });
     })
     .slice(0, 40);
 
@@ -1000,7 +1059,364 @@ function collectRepositoryInventory(repoPath) {
     api_endpoints: apiEndpoints,
     deploy_files: deployFiles,
     tables: tableNames,
+    rule_comments: ruleComments,
+    test_methods: testMethods,
+    throw_statements: businessSignals.throwStatements,
+    exception_handlers: businessSignals.exceptionHandlers,
+    validation_annotations: businessSignals.validationAnnotations,
+    assertion_statements: businessSignals.assertionStatements,
+    calculation_hints: businessSignals.calculationHints,
     sample_tree: allFiles.slice(0, 200),
+  };
+}
+
+const RULE_TRIGGER_REGEX = /必须|不得|禁止|只允许|仅限|至少|至多|最多|最少|不能|不允许|必填|要求|应当|约束|\bmust\s*n(?:o|')?t\b|\bmust\b|\brequired\b|\bmandatory\b|\bforbidden\b|\bnot\s+allowed\b|\bonly\b|\bcannot\b|\bat\s+least\b|\bat\s+most\b|\bno\s+more\s+than\b|\bno\s+less\s+than\b/i;
+
+function collectRuleCommentRecords(readableFiles) {
+  const records = [];
+  const MAX_RECORDS = 200;
+  const MAX_LINE_LENGTH = 300;
+  for (const file of readableFiles) {
+    if (records.length >= MAX_RECORDS) break;
+    const ext = path.extname(file.path).toLowerCase();
+    if (!['.java', '.kt', '.scala', '.groovy', '.ts', '.tsx', '.js', '.jsx', '.go', '.py', '.rb', '.cs', '.sql'].includes(ext)) {
+      continue;
+    }
+    const preview = typeof file.preview === 'string' ? file.preview : '';
+    if (!preview) continue;
+    const lines = preview.split(/\r?\n/);
+    for (let i = 0; i < lines.length && records.length < MAX_RECORDS; i += 1) {
+      const raw = lines[i];
+      if (raw.length > MAX_LINE_LENGTH) continue;
+      const text = extractCommentText(raw, ext);
+      if (!text) continue;
+      if (!RULE_TRIGGER_REGEX.test(text)) continue;
+      records.push({
+        text: text.trim(),
+        path: file.path,
+        line_start: i + 1,
+        line_end: i + 1,
+        source_type: ext === '.sql' ? 'sql_comment' : 'code_comment',
+      });
+    }
+  }
+  return records;
+}
+
+function extractCommentText(line, ext) {
+  const trimmed = line.trim();
+  if (!trimmed) return '';
+  if (ext === '.py' || ext === '.rb') {
+    const m = trimmed.match(/^#\s*(.+)$/);
+    if (m) return m[1];
+    return '';
+  }
+  if (ext === '.sql') {
+    const dash = trimmed.match(/^--\s*(.+)$/);
+    if (dash) return dash[1];
+    const hash = trimmed.match(/^#\s*(.+)$/);
+    if (hash) return hash[1];
+    const blockInline = trimmed.match(/\/\*+\s*(.+?)\s*\*+\//);
+    if (blockInline) return blockInline[1];
+    const commentEq = trimmed.match(/\bCOMMENT\s*[:=]?\s*['"](.+?)['"]/i);
+    if (commentEq) return commentEq[1];
+    return '';
+  }
+  const lineComment = trimmed.match(/^\/\/\s*(.+)$/);
+  if (lineComment) return lineComment[1];
+  const blockStar = trimmed.match(/^\*\s*(.+)$/);
+  if (blockStar) return blockStar[1];
+  const blockInline = trimmed.match(/\/\*+\s*(.+?)\s*\*+\//);
+  if (blockInline) return blockInline[1];
+  return '';
+}
+
+const JUNIT_METHOD_REGEX = /@Test\b[\s\S]{0,160}?\b(?:public|private|protected)?\s*(?:static\s+)?(?:\w+\s+)?(\w+)\s*\(/g;
+const JEST_IT_REGEX = /(?:\bit|\btest)\s*\(\s*['"`]([^'"`\n]{3,200})['"`]/g;
+const PYTEST_REGEX = /^\s*def\s+(test_[A-Za-z0-9_]+)\s*\(/gm;
+
+function collectTestMethodRecords(readableFiles) {
+  const records = [];
+  const MAX_RECORDS = 200;
+  for (const file of readableFiles) {
+    if (records.length >= MAX_RECORDS) break;
+    if (!/(^|\/)(__tests__|tests?|specs?)\/|(\.|-|_)(test|spec)\./i.test(file.path)) continue;
+    const preview = typeof file.preview === 'string' ? file.preview : '';
+    if (!preview) continue;
+    const ext = path.extname(file.path).toLowerCase();
+    if (ext === '.java' || ext === '.kt' || ext === '.groovy') {
+      let m;
+      while ((m = JUNIT_METHOD_REGEX.exec(preview)) && records.length < MAX_RECORDS) {
+        const name = m[1];
+        if (!name || /^(setUp|tearDown|before|after)/i.test(name)) continue;
+        const lineNo = preview.slice(0, m.index).split(/\r?\n/).length;
+        records.push({ name, path: file.path, line_start: lineNo, line_end: lineNo, framework: 'junit' });
+      }
+      JUNIT_METHOD_REGEX.lastIndex = 0;
+    } else if (ext === '.ts' || ext === '.tsx' || ext === '.js' || ext === '.jsx') {
+      let m;
+      while ((m = JEST_IT_REGEX.exec(preview)) && records.length < MAX_RECORDS) {
+        const name = m[1];
+        if (!name || name.length < 3) continue;
+        const lineNo = preview.slice(0, m.index).split(/\r?\n/).length;
+        records.push({ name, path: file.path, line_start: lineNo, line_end: lineNo, framework: 'jest' });
+      }
+      JEST_IT_REGEX.lastIndex = 0;
+    } else if (ext === '.py') {
+      let m;
+      while ((m = PYTEST_REGEX.exec(preview)) && records.length < MAX_RECORDS) {
+        const name = m[1];
+        if (!name) continue;
+        const lineNo = preview.slice(0, m.index).split(/\r?\n/).length;
+        records.push({ name, path: file.path, line_start: lineNo, line_end: lineNo, framework: 'pytest' });
+      }
+      PYTEST_REGEX.lastIndex = 0;
+    }
+  }
+  return records;
+}
+
+const THROW_STATEMENT_REGEX = /\bthrow\s+new\s+([A-Z][A-Za-z0-9_]*(?:Exception|Error|Fault))\s*\(\s*(?:"([^"\n]{0,220})"|([A-Za-z0-9_.]+))?/g;
+const EXCEPTION_HANDLER_ANNOTATION_REGEX = /@(ExceptionHandler|ControllerAdvice|RestControllerAdvice|Retryable|Recover|CircuitBreaker|Fallback|Transactional)\b(?:\s*\(\s*([^)\n]{0,200})\))?/g;
+const CATCH_CLAUSE_REGEX = /\bcatch\s*\(\s*([A-Z][A-Za-z0-9_]*(?:Exception|Error|Throwable))\s+[A-Za-z_][A-Za-z0-9_]*\s*\)/g;
+const VALIDATION_ANNOTATION_REGEX = /@(NotNull|NotBlank|NotEmpty|Size|Min|Max|Pattern|Email|Valid|DecimalMin|DecimalMax|Positive|PositiveOrZero|Negative|NegativeOrZero|Digits|Past|Future|Length|Range|AssertTrue|AssertFalse)\b(?:\s*\(\s*([^)\n]{0,200})\))?/g;
+const ASSERTION_REGEX = /\b(Preconditions\.(?:checkArgument|checkState|checkNotNull|checkPositionIndex|checkElementIndex)|Assert\.(?:isTrue|notNull|notEmpty|hasText|isInstanceOf|state)|Objects\.requireNonNull|Validate\.(?:notNull|notEmpty|notBlank|isTrue))\s*\(\s*([^;\n]{0,200})/g;
+const INLINE_ASSERT_REGEX = /^\s*assert\s+([^;\n]{1,200});/gm;
+const CALCULATION_KEYWORD_REGEX = /\b(BigDecimal|RoundingMode|Math\.(?:abs|max|min|round|floor|ceil|pow|sqrt|log)|LocalDate(?:Time)?\.plus|Duration\.between|ChronoUnit\.|Money\.|MonetaryAmount|Percentage)\b/;
+const CALCULATION_COMMENT_REGEX = /计算|公式|费率|汇率|税率|折扣|利率|\bformula\b|\brate\b|\bdiscount\b|\btax\b|\binterest\b/i;
+const UNIQUE_CONSTRAINT_SQL_REGEX = /\b(?:UNIQUE\s+KEY|CONSTRAINT\s+\w+\s+UNIQUE|UNIQUE\s+INDEX)\b/i;
+const UNIQUE_CONSTRAINT_JAVA_REGEX = /(?:@Column\s*\(\s*[^)]*unique\s*=\s*true|@Table\s*\(\s*[^)]*uniqueConstraints\s*=|@Unique)\b/i;
+
+const BUSINESS_SIGNAL_SOURCE_EXTS = ['.java', '.kt', '.scala', '.groovy'];
+const BUSINESS_SIGNAL_SQL_EXTS = ['.sql'];
+
+function pushIfBounded(records, record, cap) {
+  if (records.length >= cap) return false;
+  records.push(record);
+  return true;
+}
+
+function lineOfIndex(preview, index) {
+  if (typeof index !== 'number' || index < 0) return 1;
+  return preview.slice(0, index).split(/\r?\n/).length;
+}
+
+function collectBusinessLogicSignals(readableFiles) {
+  const throwStatements = [];
+  const exceptionHandlers = [];
+  const validationAnnotations = [];
+  const assertionStatements = [];
+  const calculationHints = [];
+  const CAP_PER_KIND = 240;
+
+  for (const file of readableFiles) {
+    const ext = path.extname(file.path).toLowerCase();
+    const preview = typeof file.preview === 'string' ? file.preview : '';
+    if (!preview) continue;
+
+    if (BUSINESS_SIGNAL_SOURCE_EXTS.includes(ext)) {
+      // throw new X("msg")
+      let match;
+      THROW_STATEMENT_REGEX.lastIndex = 0;
+      while ((match = THROW_STATEMENT_REGEX.exec(preview))) {
+        const exceptionType = match[1];
+        const literal = match[2];
+        const reference = match[3];
+        const line = lineOfIndex(preview, match.index);
+        if (!pushIfBounded(
+          throwStatements,
+          {
+            path: file.path,
+            line_start: line,
+            line_end: line,
+            exception_type: exceptionType,
+            message: literal || (reference ? `arg:${reference}` : null),
+          },
+          CAP_PER_KIND,
+        )) break;
+      }
+
+      // annotation-based handlers
+      EXCEPTION_HANDLER_ANNOTATION_REGEX.lastIndex = 0;
+      while ((match = EXCEPTION_HANDLER_ANNOTATION_REGEX.exec(preview))) {
+        const annotation = match[1];
+        const args = match[2] ? match[2].trim() : '';
+        const line = lineOfIndex(preview, match.index);
+        if (!pushIfBounded(
+          exceptionHandlers,
+          {
+            path: file.path,
+            line_start: line,
+            line_end: line,
+            annotation,
+            arguments: args || null,
+            kind: annotation === 'Retryable' || annotation === 'Recover' || annotation === 'CircuitBreaker' || annotation === 'Fallback'
+              ? 'resilience'
+              : annotation === 'Transactional'
+                ? 'transaction'
+                : 'handler',
+          },
+          CAP_PER_KIND,
+        )) break;
+      }
+
+      // catch (XException)
+      CATCH_CLAUSE_REGEX.lastIndex = 0;
+      while ((match = CATCH_CLAUSE_REGEX.exec(preview))) {
+        const exceptionType = match[1];
+        const line = lineOfIndex(preview, match.index);
+        if (!pushIfBounded(
+          exceptionHandlers,
+          {
+            path: file.path,
+            line_start: line,
+            line_end: line,
+            annotation: null,
+            exception_type: exceptionType,
+            kind: 'catch',
+          },
+          CAP_PER_KIND,
+        )) break;
+      }
+
+      // @NotNull / @Size etc.
+      VALIDATION_ANNOTATION_REGEX.lastIndex = 0;
+      while ((match = VALIDATION_ANNOTATION_REGEX.exec(preview))) {
+        const annotation = match[1];
+        const args = match[2] ? match[2].trim() : '';
+        const line = lineOfIndex(preview, match.index);
+        if (!pushIfBounded(
+          validationAnnotations,
+          {
+            path: file.path,
+            line_start: line,
+            line_end: line,
+            annotation,
+            arguments: args || null,
+          },
+          CAP_PER_KIND,
+        )) break;
+      }
+
+      // Preconditions/Assert/Validate/Objects.requireNonNull
+      ASSERTION_REGEX.lastIndex = 0;
+      while ((match = ASSERTION_REGEX.exec(preview))) {
+        const call = match[1];
+        const args = (match[2] || '').trim();
+        const line = lineOfIndex(preview, match.index);
+        if (!pushIfBounded(
+          assertionStatements,
+          {
+            path: file.path,
+            line_start: line,
+            line_end: line,
+            assertion: call,
+            arguments: args ? args.slice(0, 200) : null,
+            source_type: 'guard_call',
+          },
+          CAP_PER_KIND,
+        )) break;
+      }
+
+      // inline `assert foo != null;`
+      INLINE_ASSERT_REGEX.lastIndex = 0;
+      while ((match = INLINE_ASSERT_REGEX.exec(preview))) {
+        const args = (match[1] || '').trim();
+        if (!args) continue;
+        const line = lineOfIndex(preview, match.index);
+        if (!pushIfBounded(
+          assertionStatements,
+          {
+            path: file.path,
+            line_start: line,
+            line_end: line,
+            assertion: 'assert',
+            arguments: args.slice(0, 200),
+            source_type: 'inline_assert',
+          },
+          CAP_PER_KIND,
+        )) break;
+      }
+
+      // calculation hints — scan line by line
+      const lines = preview.split(/\r?\n/);
+      for (let i = 0; i < lines.length; i += 1) {
+        const raw = lines[i];
+        if (!raw) continue;
+        const trimmed = raw.trim();
+        if (trimmed.length > 400) continue;
+        const kwMatch = trimmed.match(CALCULATION_KEYWORD_REGEX);
+        const commentHit = extractCommentText(raw, ext);
+        const commentMatch = commentHit ? CALCULATION_COMMENT_REGEX.test(commentHit) : false;
+        if (!kwMatch && !commentMatch) continue;
+        pushIfBounded(
+          calculationHints,
+          {
+            path: file.path,
+            line_start: i + 1,
+            line_end: i + 1,
+            text: trimmed.slice(0, 220),
+            keyword: kwMatch ? kwMatch[1] : null,
+            source_type: commentMatch ? 'comment' : 'code',
+          },
+          CAP_PER_KIND,
+        );
+        if (calculationHints.length >= CAP_PER_KIND) break;
+      }
+    }
+
+    if (BUSINESS_SIGNAL_SQL_EXTS.includes(ext)) {
+      // UNIQUE constraints in SQL → invariant candidates
+      const lines = preview.split(/\r?\n/);
+      for (let i = 0; i < lines.length; i += 1) {
+        const raw = lines[i];
+        if (!UNIQUE_CONSTRAINT_SQL_REGEX.test(raw)) continue;
+        pushIfBounded(
+          assertionStatements,
+          {
+            path: file.path,
+            line_start: i + 1,
+            line_end: i + 1,
+            assertion: 'UNIQUE',
+            arguments: raw.trim().slice(0, 200),
+            source_type: 'sql_unique',
+          },
+          CAP_PER_KIND,
+        );
+        if (assertionStatements.length >= CAP_PER_KIND) break;
+      }
+    }
+
+    if (BUSINESS_SIGNAL_SOURCE_EXTS.includes(ext)) {
+      // @Column(unique=true) / @Unique / @Table(uniqueConstraints=...) → invariant candidates
+      const lines = preview.split(/\r?\n/);
+      for (let i = 0; i < lines.length; i += 1) {
+        const raw = lines[i];
+        if (!raw) continue;
+        if (!UNIQUE_CONSTRAINT_JAVA_REGEX.test(raw)) continue;
+        pushIfBounded(
+          assertionStatements,
+          {
+            path: file.path,
+            line_start: i + 1,
+            line_end: i + 1,
+            assertion: 'UNIQUE',
+            arguments: raw.trim().slice(0, 200),
+            source_type: 'java_unique',
+          },
+          CAP_PER_KIND,
+        );
+        if (assertionStatements.length >= CAP_PER_KIND) break;
+      }
+    }
+  }
+
+  return {
+    throwStatements,
+    exceptionHandlers,
+    validationAnnotations,
+    assertionStatements,
+    calculationHints,
   };
 }
 
@@ -1077,6 +1493,13 @@ function prefixInventoryPaths(inventory, prefix) {
     entities: prefixObjectArray(inventory.entities),
     feign_clients: prefixObjectArray(inventory.feign_clients),
     sql_tables: prefixObjectArray(inventory.sql_tables),
+    rule_comments: prefixObjectArray(inventory.rule_comments),
+    test_methods: prefixObjectArray(inventory.test_methods),
+    throw_statements: prefixObjectArray(inventory.throw_statements),
+    exception_handlers: prefixObjectArray(inventory.exception_handlers),
+    validation_annotations: prefixObjectArray(inventory.validation_annotations),
+    assertion_statements: prefixObjectArray(inventory.assertion_statements),
+    calculation_hints: prefixObjectArray(inventory.calculation_hints),
   };
 }
 
@@ -1182,6 +1605,34 @@ function collectProjectManifestInventory(repoUnits = []) {
     entities: mergeUniqueObjects(inventories.flatMap((item) => item.entities || []), (item) => `${item.path}:${item.class_name}:${item.table_name}`).slice(0, 80),
     feign_clients: mergeUniqueObjects(inventories.flatMap((item) => item.feign_clients || []), (item) => `${item.path}:${item.class_name}`).slice(0, 40),
     sql_tables: mergeUniqueObjects(inventories.flatMap((item) => item.sql_tables || []), (item) => `${item.path}:${item.table_name}`).slice(0, 80),
+    rule_comments: mergeUniqueObjects(
+      inventories.flatMap((item) => item.rule_comments || []),
+      (item) => `${item.path}:${item.line_start || ''}:${(item.text || '').slice(0, 60)}`
+    ).slice(0, 200),
+    test_methods: mergeUniqueObjects(
+      inventories.flatMap((item) => item.test_methods || []),
+      (item) => `${item.path}:${item.name || ''}:${item.line_start || ''}`
+    ).slice(0, 200),
+    throw_statements: mergeUniqueObjects(
+      inventories.flatMap((item) => item.throw_statements || []),
+      (item) => `${item.path}:${item.line_start || ''}:${item.exception_type || ''}`
+    ).slice(0, 240),
+    exception_handlers: mergeUniqueObjects(
+      inventories.flatMap((item) => item.exception_handlers || []),
+      (item) => `${item.path}:${item.line_start || ''}:${item.annotation || ''}:${item.exception_type || ''}:${item.kind || ''}`
+    ).slice(0, 240),
+    validation_annotations: mergeUniqueObjects(
+      inventories.flatMap((item) => item.validation_annotations || []),
+      (item) => `${item.path}:${item.line_start || ''}:${item.annotation || ''}`
+    ).slice(0, 240),
+    assertion_statements: mergeUniqueObjects(
+      inventories.flatMap((item) => item.assertion_statements || []),
+      (item) => `${item.path}:${item.line_start || ''}:${item.assertion || ''}`
+    ).slice(0, 240),
+    calculation_hints: mergeUniqueObjects(
+      inventories.flatMap((item) => item.calculation_hints || []),
+      (item) => `${item.path}:${item.line_start || ''}:${item.keyword || ''}:${(item.text || '').slice(0, 40)}`
+    ).slice(0, 240),
     api_endpoints: uniqueBy(inventories.flatMap((item) => item.api_endpoints || []), (item) => item).slice(0, 80),
     deploy_files: uniqueBy(inventories.flatMap((item) => item.deploy_files || []), (item) => item).slice(0, 40),
     tables: uniqueBy(inventories.flatMap((item) => item.tables || []), (item) => item).slice(0, 80),

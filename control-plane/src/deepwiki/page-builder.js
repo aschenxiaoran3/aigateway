@@ -1,3 +1,12 @@
+const { deriveBusinessLogicAssets } = require('./business-logic-mining');
+const { loadBusinessLexicon } = require('./business-lexicon');
+const {
+  buildEnforcerContext,
+  enforceCitations,
+  formatCitationString,
+  DEFAULT_MODE: DEFAULT_CITATION_MODE,
+} = require('./citation-enforcer');
+
 function createBuildDeepWikiPages(deps = {}) {
   const {
     summarizeResearchReport,
@@ -38,6 +47,7 @@ function createBuildDeepWikiPages(deps = {}) {
     outputProfile,
     diagramProfile,
     synthesizedDiagrams = null,
+    businessLogicAssets = null,
   }) {
     const commitShort = String(repo.commit_sha || '').slice(0, 12);
     const researchSummary = summarizeResearchReport(researchReport);
@@ -130,6 +140,8 @@ function createBuildDeepWikiPages(deps = {}) {
       commit_sha: repo.commit_sha,
     };
 
+    const resolvedBusinessLogic = businessLogicAssets || buildBusinessLogicFromInventory(inventory);
+
     const pages = [];
     const pushPage = (page) => {
       pages.push({
@@ -217,7 +229,13 @@ function createBuildDeepWikiPages(deps = {}) {
         ...(diagramSynthUsed
           ? ['> 下图谱已由结构化制图阶段生成或部分覆盖；未通过校验的图仍回退为启发式模板。', '']
           : []),
-        '## 工程架构包导览',
+        '## 业务视角入口（推荐先看）',
+        toMarkdownList([
+          '`00b-business-logic` 业务逻辑洞察：抽取自注释 / 测试 / 异常 / 校验注解的**可验证业务规则、场景、计算、状态机、失败补偿、不变量**',
+          '所有业务陈述均带有 `file:Lstart-Lend` 行号引用，可一键跳转源码',
+        ]),
+        '',
+        '## 工程架构包导览（技术视角）',
         toMarkdownList([
           '代码分层架构图：体现 Controller / Application / Domain / Repository / Model 分层与调用语义',
           '技术架构图：体现入口、服务、数据与外部依赖边界',
@@ -230,6 +248,12 @@ function createBuildDeepWikiPages(deps = {}) {
         buildMermaidBlock('', overviewDiagram),
       ].join('\n'),
     });
+
+    const enforcerContext = buildInventoryEnforcerContext(inventory);
+    const businessLogicPage = renderBusinessLogicPage(resolvedBusinessLogic, { enforcerContext });
+    if (businessLogicPage) {
+      pushPage(businessLogicPage);
+    }
 
     pushPage({
       page_slug: '01-code-layered-architecture',
@@ -258,13 +282,18 @@ function createBuildDeepWikiPages(deps = {}) {
         '## Mermaid 代码分层架构图',
         buildMermaidBlock('', codeLayerDiagram),
         '',
-        '## 分层关注点',
+        '<details>',
+        '<summary>附：按分层的技术构件清单（辅助，默认折叠）</summary>',
+        '',
         toMarkdownList([
           `Controller：${controllers.map((item) => item.class_name).slice(0, 8).join('、') || '待确认'}`,
           `Application / Query：${services.map((item) => item.class_name).slice(0, 10).join('、') || '待确认'}`,
           `Repository / Mapper：${[...repositories.map((item) => item.class_name), ...mapperModels.map((item) => item.class_name)].slice(0, 10).join('、') || '待确认'}`,
           `Entity / DTO / VO：${[...entities.map((item) => item.class_name || item.table_name), ...dtoModels.map((item) => item.class_name), ...voModels.map((item) => item.class_name)].slice(0, 12).join('、') || '待确认'}`,
         ]),
+        '',
+        '> 关键业务规则、场景与状态机请参见 `00b-business-logic` 页面，其中每条陈述带有行号级引用。',
+        '</details>',
         '',
         ...(codeLayerPick.summary ? ['## 图说明', codeLayerPick.summary, ''] : []),
         ...(codeLayerPick.coveredEvidence.length ? ['## 证据来源', toMarkdownList(codeLayerPick.coveredEvidence), ''] : []),
@@ -299,11 +328,21 @@ function createBuildDeepWikiPages(deps = {}) {
         '## 核心边界',
         toMarkdownList([
           `入口：${entryCandidates.join('、') || '待确认'}`,
+          `API 数：${apiEndpoints.length}，表数：${tables.length}`,
+          `外部依赖：${feignClients.map((item) => item.class_name).slice(0, 6).join('、') || '无'}`,
+        ]),
+        '',
+        '<details>',
+        '<summary>附：服务、API、表清单（辅助，默认折叠）</summary>',
+        '',
+        toMarkdownList([
           `API：${apiEndpoints.slice(0, 10).join('、') || '待确认'}`,
           `服务：${services.map((item) => item.class_name).slice(0, 10).join('、') || '待确认'}`,
           `数据：${tables.slice(0, 10).join('、') || '待确认'}`,
-          `外部依赖：${feignClients.map((item) => item.class_name).slice(0, 6).join('、') || '待确认'}`,
         ]),
+        '',
+        '> 上述清单用于校对规模与拓扑；业务语义请以 `00b-business-logic` 为准。',
+        '</details>',
         '',
         ...(technicalPick.summary ? ['## 图说明', technicalPick.summary, ''] : []),
         ...(technicalPick.coveredEvidence.length ? ['## 证据来源', toMarkdownList(technicalPick.coveredEvidence), ''] : []),
@@ -465,11 +504,15 @@ function createBuildDeepWikiPages(deps = {}) {
             : ['当前未识别到带显式表名映射的实体类']
         ),
         '',
-        '## 持久层组件',
+        '<details>',
+        '<summary>附：持久层组件清单（辅助，默认折叠）</summary>',
+        '',
         toMarkdownList(repositories.map((item) => `${item.class_name} · ${item.path}`)),
+        '</details>',
         '',
         '## 说明',
         '- 当前以 DDL 文件、实体类、Mapper / Repository 命名线索为主，字段级关系仍需结合源码与数据库确认。',
+        '- 字段级约束（@NotNull / UNIQUE / @Size）已汇集至 `00b-business-logic#不变量与约束`，此处仅提供 ER 概览。',
       ].join('\n'),
     });
 
@@ -891,6 +934,511 @@ function createBuildDeepWikiPages(deps = {}) {
   };
 }
 
+function buildBusinessLogicFromInventory(inventory) {
+  const emptyAssets = {
+    business_rules: [],
+    test_evidence: [],
+    state_machines_with_guards: [],
+    scenarios: [],
+    calculations: [],
+    failure_modes: [],
+    invariants: [],
+    summary: {},
+  };
+  if (!inventory || typeof inventory !== 'object') {
+    return emptyAssets;
+  }
+  const ruleComments = Array.isArray(inventory.rule_comments) ? inventory.rule_comments : [];
+  const testMethods = Array.isArray(inventory.test_methods) ? inventory.test_methods : [];
+  const throwStatements = Array.isArray(inventory.throw_statements) ? inventory.throw_statements : [];
+  const exceptionHandlers = Array.isArray(inventory.exception_handlers) ? inventory.exception_handlers : [];
+  const validationAnnotations = Array.isArray(inventory.validation_annotations) ? inventory.validation_annotations : [];
+  const assertionStatements = Array.isArray(inventory.assertion_statements) ? inventory.assertion_statements : [];
+  const calculationHints = Array.isArray(inventory.calculation_hints) ? inventory.calculation_hints : [];
+  const sqlTables = Array.isArray(inventory.sql_tables) ? inventory.sql_tables : [];
+  const erModel = sqlTables
+    .filter((t) => t && (t.table_name || t.table) && Array.isArray(t.columns))
+    .map((t) => ({
+      table: t.table_name || t.table,
+      path: t.path,
+      // parseSqlTableDefinitions returns columns as plain strings (column
+      // names); richer sources may return { name, notNull, primary, unique,
+      // comment } objects. Normalise both shapes.
+      columns: (t.columns || []).map((c) => {
+        if (typeof c === 'string') {
+          return { name: c, notNull: false, primary: false, unique: false, comment: '' };
+        }
+        if (c && typeof c === 'object') {
+          return {
+            name: c.name || '',
+            notNull: Boolean(c.notNull),
+            primary: Boolean(c.primary),
+            unique: Boolean(c.unique),
+            comment: c.comment || '',
+          };
+        }
+        return null;
+      }).filter(Boolean),
+    }));
+  const hasAny = ruleComments.length
+    || testMethods.length
+    || throwStatements.length
+    || exceptionHandlers.length
+    || validationAnnotations.length
+    || assertionStatements.length
+    || calculationHints.length
+    || erModel.length;
+  if (!hasAny) return emptyAssets;
+  const topology = {
+    repos: [
+      {
+        repo_slug: inventory.repo_slug || 'current',
+        commentRecords: ruleComments,
+        testMethods,
+        throwStatements,
+        exceptionHandlers,
+        validationAnnotations,
+        assertionStatements,
+        calculationHints,
+      },
+    ],
+  };
+  try {
+    const lexicon = loadBusinessLexicon();
+    return deriveBusinessLogicAssets({
+      config: {},
+      topology,
+      dataContracts: { apiContracts: [], erModel, eventCatalog: [] },
+      semantic: { businessTerms: [], businessActions: [], stateMachines: [] },
+      lexicon,
+    });
+  } catch (err) {
+    return { ...emptyAssets, summary: { error: String(err && err.message || err) } };
+  }
+}
+
+function buildInventoryEnforcerContext(inventory) {
+  if (!inventory || typeof inventory !== 'object') return null;
+  const allowedPaths = new Set();
+  const pushAll = (arr, key = 'path') => {
+    if (!Array.isArray(arr)) return;
+    for (const item of arr) {
+      if (!item) continue;
+      if (typeof item === 'string') {
+        allowedPaths.add(item);
+      } else if (typeof item === 'object' && item[key]) {
+        allowedPaths.add(item[key]);
+      }
+    }
+  };
+  pushAll(inventory.sample_tree);
+  pushAll(inventory.controllers);
+  pushAll(inventory.services);
+  pushAll(inventory.repositories);
+  pushAll(inventory.entities);
+  pushAll(inventory.mapper_models);
+  pushAll(inventory.dto_models);
+  pushAll(inventory.vo_models);
+  pushAll(inventory.request_models);
+  pushAll(inventory.criteria_models);
+  pushAll(inventory.feign_clients);
+  pushAll(inventory.sql_tables);
+  pushAll(inventory.rule_comments);
+  pushAll(inventory.test_methods);
+  pushAll(inventory.throw_statements);
+  pushAll(inventory.exception_handlers);
+  pushAll(inventory.validation_annotations);
+  pushAll(inventory.assertion_statements);
+  pushAll(inventory.calculation_hints);
+  pushAll(inventory.docs);
+  pushAll(inventory.frontend_pages);
+  pushAll(inventory.test_files);
+  if (allowedPaths.size === 0) return null;
+  return buildEnforcerContext({
+    allowedPaths: Array.from(allowedPaths),
+    mode: process.env.DEEPWIKI_CITATION_MODE === 'strict' ? 'strict' : DEFAULT_CITATION_MODE,
+  });
+}
+
+function formatCitation(citation) {
+  return formatCitationString(citation);
+}
+
+function formatCitations(citations) {
+  if (!Array.isArray(citations)) return '';
+  const rendered = citations.map((c) => formatCitationString(c)).filter(Boolean);
+  if (!rendered.length) return '';
+  return rendered.slice(0, 3).join('、');
+}
+
+function filterCitations(citations, ctx) {
+  if (!Array.isArray(citations) || citations.length === 0) return { accepted: [], rejected: [], downgraded: [] };
+  if (!ctx) {
+    return {
+      accepted: citations.filter((c) => c && typeof c === 'object' && c.path),
+      rejected: [],
+      downgraded: [],
+    };
+  }
+  return enforceCitations(citations, ctx);
+}
+
+function enforceCitation(citation, ctx) {
+  if (!ctx) return citation && typeof citation === 'object' && citation.path ? citation : null;
+  const result = enforceCitations([citation], ctx);
+  return result.accepted[0] || null;
+}
+
+function renderBusinessLogicPage(assets, options = {}) {
+  if (!assets || typeof assets !== 'object') return null;
+  const ctx = options.enforcerContext || null;
+  const rulesInput = Array.isArray(assets.business_rules) ? assets.business_rules : [];
+  const testEvidenceInput = Array.isArray(assets.test_evidence) ? assets.test_evidence : [];
+  const stateMachinesInput = Array.isArray(assets.state_machines_with_guards) ? assets.state_machines_with_guards : [];
+  const scenariosInput = Array.isArray(assets.scenarios) ? assets.scenarios : [];
+  const calculationsInput = Array.isArray(assets.calculations) ? assets.calculations : [];
+  const failureModesInput = Array.isArray(assets.failure_modes) ? assets.failure_modes : [];
+  const invariantsInput = Array.isArray(assets.invariants) ? assets.invariants : [];
+
+  const manifest = {
+    dropped_rules: 0,
+    dropped_tests: 0,
+    dropped_transitions: 0,
+    dropped_scenarios: 0,
+    dropped_calculations: 0,
+    dropped_failure_modes: 0,
+    dropped_invariants: 0,
+    downgraded: 0,
+  };
+
+  const filterRecord = (record) => {
+    const accepted = filterCitations(record.citations, ctx);
+    manifest.downgraded += accepted.downgraded.length;
+    if (ctx && ctx.mode === 'strict' && accepted.accepted.length === 0) return null;
+    return { ...record, citations: accepted.accepted };
+  };
+
+  const rules = rulesInput
+    .map((rule) => {
+      const filtered = filterRecord(rule);
+      if (!filtered) manifest.dropped_rules += 1;
+      return filtered;
+    })
+    .filter(Boolean);
+
+  const testEvidence = testEvidenceInput
+    .map((evidence) => {
+      const filtered = filterRecord(evidence);
+      if (!filtered) manifest.dropped_tests += 1;
+      return filtered;
+    })
+    .filter(Boolean);
+
+  const stateMachines = stateMachinesInput.map((machine) => {
+    const transitions = Array.isArray(machine.transitions)
+      ? machine.transitions
+          .map((t) => {
+            // Only file-path citations are enforceable; event/entity reference
+            // citations (no `path`) pass through unchanged.
+            const hasFilePath = t.citation && typeof t.citation === 'object' && t.citation.path;
+            const cite = hasFilePath ? enforceCitation(t.citation, ctx) : null;
+            if (ctx && ctx.mode === 'strict' && hasFilePath && !cite) {
+              manifest.dropped_transitions += 1;
+              return null;
+            }
+            return { ...t, citation: cite || t.citation || null };
+          })
+          .filter(Boolean)
+      : [];
+    return { ...machine, transitions };
+  });
+
+  const scenarios = scenariosInput
+    .map((item) => {
+      const filtered = filterRecord(item);
+      if (!filtered) manifest.dropped_scenarios += 1;
+      return filtered;
+    })
+    .filter(Boolean);
+
+  const calculations = calculationsInput
+    .map((item) => {
+      const filtered = filterRecord(item);
+      if (!filtered) manifest.dropped_calculations += 1;
+      return filtered;
+    })
+    .filter(Boolean);
+
+  const failureModes = failureModesInput
+    .map((item) => {
+      const filtered = filterRecord(item);
+      if (!filtered) {
+        manifest.dropped_failure_modes += 1;
+        return null;
+      }
+      const compensation = Array.isArray(item.compensation)
+        ? item.compensation
+            .map((c) => {
+              if (!c || typeof c !== 'object') return null;
+              const cite = c.citation ? enforceCitation(c.citation, ctx) : null;
+              return { ...c, citation: cite || (c.citation && (!ctx || ctx.mode !== 'strict') ? c.citation : null) };
+            })
+            .filter(Boolean)
+        : [];
+      return { ...filtered, compensation };
+    })
+    .filter(Boolean);
+
+  const invariants = invariantsInput
+    .map((item) => {
+      const filtered = filterRecord(item);
+      if (!filtered) manifest.dropped_invariants += 1;
+      return filtered;
+    })
+    .filter(Boolean);
+
+  // In strict mode, stateMachinesInput.map preserves length even when every
+  // transition is dropped; we need to check whether any substantive content
+  // remains (at least one transition across any machine).
+  const hasStateMachineContent = stateMachines.some(
+    (m) => Array.isArray(m.transitions) && m.transitions.length > 0,
+  );
+  if (
+    !rules.length
+    && !testEvidence.length
+    && !hasStateMachineContent
+    && !scenarios.length
+    && !calculations.length
+    && !failureModes.length
+    && !invariants.length
+  ) {
+    return null;
+  }
+
+  const lines = [];
+  lines.push('# 业务逻辑洞察');
+  lines.push('');
+  lines.push('> 本页聚合从代码注释、测试命名、状态机等来源挖掘得到的**业务语义**证据；目的在于让 Wiki 正文承载「业务规则 / 场景 / 状态迁移」，而非仅罗列技术构件。');
+  lines.push('');
+
+  if (rules.length) {
+    lines.push('## 业务规则');
+    lines.push('');
+    lines.push('| # | 规则 | 触发词 | 来源 | 置信度 |');
+    lines.push('| - | ---- | ------ | ---- | ------ |');
+    rules.slice(0, 40).forEach((rule, idx) => {
+      const citation = formatCitations(rule.citations) || '—';
+      const text = String(rule.natural_text || '').replace(/\|/g, '\\|').slice(0, 160);
+      const trigger = String(rule.trigger || '').replace(/\|/g, '\\|');
+      const confidence = typeof rule.confidence === 'number' ? rule.confidence.toFixed(2) : '—';
+      lines.push(`| ${idx + 1} | ${text || '—'} | ${trigger || '—'} | ${citation} | ${confidence} |`);
+    });
+    lines.push('');
+  }
+
+  // Only emit the section when at least one machine still has transitions
+  // after strict-mode citation enforcement; otherwise skip to avoid empty
+  // "## 状态机与守卫 / ### Entity" headers with no body.
+  const renderableStateMachines = stateMachines.filter(
+    (m) => Array.isArray(m.transitions) && m.transitions.length > 0,
+  );
+  if (renderableStateMachines.length) {
+    lines.push('## 状态机与守卫');
+    lines.push('');
+    renderableStateMachines.slice(0, 8).forEach((machine) => {
+      lines.push(`### ${machine.entity || '状态机'}`);
+      const states = Array.isArray(machine.states) ? machine.states : [];
+      if (states.length) {
+        lines.push(`- 状态：${states.join(' → ')}`);
+      }
+      const transitions = Array.isArray(machine.transitions) ? machine.transitions : [];
+      if (transitions.length) {
+        lines.push('- 迁移：');
+        transitions.slice(0, 16).forEach((t) => {
+          const parts = [];
+          parts.push(`\`${t.from || '?'}\` → \`${t.to || '?'}\``);
+          if (t.trigger) parts.push(`触发：${t.trigger}`);
+          if (t.guard) parts.push(`守卫：${t.guard}`);
+          const effects = Array.isArray(t.side_effects) ? t.side_effects.filter(Boolean) : [];
+          if (effects.length) {
+            const rendered = effects
+              .slice(0, 3)
+              .map((e) => {
+                if (e == null) return '';
+                if (typeof e === 'string') return e;
+                if (typeof e === 'object') {
+                  const label = e.name || e.text || e.hint || e.topic || e.type;
+                  if (label) return e.type && e.type !== label ? `${e.type}:${label}` : String(label);
+                  try { return JSON.stringify(e); } catch (_err) { return ''; }
+                }
+                return String(e);
+              })
+              .filter(Boolean);
+            if (rendered.length) parts.push(`副作用：${rendered.join('、')}`);
+          }
+          const cite = formatCitation(t.citation);
+          if (cite) parts.push(`证据：${cite}`);
+          lines.push(`  - ${parts.join(' ｜ ')}`);
+        });
+      }
+      lines.push('');
+    });
+  }
+
+  if (testEvidence.length) {
+    lines.push('## 测试证据（Given-When-Then）');
+    lines.push('');
+    lines.push('> 测试命名是业务规则最诚实的来源；下列条目由测试方法名 / `it(...)` 描述自动解析。');
+    lines.push('');
+    lines.push('| # | 描述 | Given | When | Then | 来源 |');
+    lines.push('| - | ---- | ----- | ---- | ---- | ---- |');
+    testEvidence.slice(0, 40).forEach((item, idx) => {
+      const citation = formatCitations(item.citations) || '—';
+      const toCell = (s) => String(s || '—').replace(/\|/g, '\\|').slice(0, 100);
+      lines.push(
+        `| ${idx + 1} | ${toCell(item.description)} | ${toCell(item.given)} | ${toCell(item.when)} | ${toCell(item.then)} | ${citation} |`,
+      );
+    });
+    lines.push('');
+  }
+
+  if (scenarios.length) {
+    lines.push('## 业务场景（Happy / Branch / Exception）');
+    lines.push('');
+    const scenarioGroups = [
+      { type: 'happy', title: '正常路径（Happy Path）' },
+      { type: 'branch', title: '分支路径（Branch）' },
+      { type: 'exception', title: '异常路径（Exception）' },
+    ];
+    for (const group of scenarioGroups) {
+      const subset = scenarios.filter((s) => s.type === group.type);
+      if (!subset.length) continue;
+      lines.push(`### ${group.title}`);
+      lines.push('');
+      lines.push('| # | 场景 | 前置 | 步骤 | 结果 | 来源 |');
+      lines.push('| - | ---- | ---- | ---- | ---- | ---- |');
+      subset.slice(0, 24).forEach((s, idx) => {
+        const toCell = (v) => {
+          const text = Array.isArray(v) ? v.join(' / ') : String(v || '—');
+          return text.replace(/\|/g, '\\|').slice(0, 120) || '—';
+        };
+        const citation = formatCitations(s.citations) || '—';
+        lines.push(
+          `| ${idx + 1} | ${toCell(s.title)} | ${toCell(s.preconditions)} | ${toCell(s.steps)} | ${toCell(s.expected_outcome)} | ${citation} |`,
+        );
+      });
+      lines.push('');
+    }
+  }
+
+  if (calculations.length) {
+    lines.push('## 关键计算与边界');
+    lines.push('');
+    lines.push('> 抽取金额/时间/费率等业务计算逻辑与数值边界，用于核对与回归测试。');
+    lines.push('');
+    lines.push('| # | 公式 / 表达 | 关键字 | 边界 | 来源 |');
+    lines.push('| - | ----------- | ------ | ---- | ---- |');
+    calculations.slice(0, 32).forEach((calc, idx) => {
+      const citation = formatCitations(calc.citations) || '—';
+      const toCell = (s) => String(s || '—').replace(/\|/g, '\\|').slice(0, 140);
+      const boundaries = Array.isArray(calc.boundaries) && calc.boundaries.length
+        ? calc.boundaries.map((b) => b.bound).filter(Boolean).join('；')
+        : '—';
+      lines.push(
+        `| ${idx + 1} | ${toCell(calc.formula_text)} | ${toCell(calc.keyword)} | ${toCell(boundaries)} | ${citation} |`,
+      );
+    });
+    lines.push('');
+  }
+
+  if (failureModes.length) {
+    lines.push('## 失败模式与补偿');
+    lines.push('');
+    lines.push('> 抛出路径（`throw new ...Exception`）与补偿机制（`@Retryable` / `@Fallback` / `@ExceptionHandler` / `catch`）。');
+    lines.push('');
+    lines.push('| # | 触发条件 | 异常类型 | 补偿 | 来源 |');
+    lines.push('| - | -------- | -------- | ---- | ---- |');
+    failureModes.slice(0, 40).forEach((fm, idx) => {
+      const citation = formatCitations(fm.citations) || '—';
+      const toCell = (s) => String(s || '—').replace(/\|/g, '\\|').slice(0, 140);
+      const compensation = Array.isArray(fm.compensation) && fm.compensation.length
+        ? fm.compensation
+            .slice(0, 3)
+            .map((c) => c && typeof c === 'object' ? (c.text || c.kind || '') : String(c || ''))
+            .filter(Boolean)
+            .join('；')
+        : '—';
+      lines.push(
+        `| ${idx + 1} | ${toCell(fm.trigger_condition)} | ${toCell(fm.exception_type)} | ${toCell(compensation)} | ${citation} |`,
+      );
+    });
+    lines.push('');
+  }
+
+  if (invariants.length) {
+    lines.push('## 不变量与约束');
+    lines.push('');
+    lines.push('> 字段校验（`@NotNull` / `@Size` / `@Min` / `@Max` / `@Pattern` …）、断言（`Preconditions.check*` / `Objects.requireNonNull`）、数据库约束（PK / UNIQUE / NOT NULL）。');
+    lines.push('');
+    lines.push('| # | 约束 | 作用域 | 来源路径 |');
+    lines.push('| - | ---- | ------ | -------- |');
+    invariants.slice(0, 60).forEach((inv, idx) => {
+      const citation = formatCitations(inv.citations) || '—';
+      const toCell = (s) => String(s || '—').replace(/\|/g, '\\|').slice(0, 160);
+      lines.push(
+        `| ${idx + 1} | ${toCell(inv.condition)} | ${toCell(inv.scope)} | ${citation} |`,
+      );
+    });
+    lines.push('');
+  }
+
+  lines.push('## 附：辅助信息');
+  lines.push('');
+  lines.push('- 技术构件清单（controllers / services / repositories / tables 等）已降级为辅助信息，参见其他章节「代码分层架构图」与「模块详情」。');
+  lines.push('- 本页内容来自 L3.5 `business_logic_mining` 阶段的启发式抽取，`citations` 字段已携带 `path` + `line_start` / `line_end`。');
+
+  const summary = assets.summary || {};
+  return {
+    page_slug: '00b-business-logic',
+    title: '业务逻辑洞察',
+    page_type: 'business-logic',
+    source_files: collectSourceFilesFromAssets(rules, testEvidence, scenarios, calculations, failureModes, invariants),
+    content: lines.join('\n'),
+    metadata_json: {
+      rule_count: rules.length,
+      test_evidence_count: testEvidence.length,
+      state_machine_count: stateMachines.length,
+      scenario_count: scenarios.length,
+      calculation_count: calculations.length,
+      failure_mode_count: failureModes.length,
+      invariant_count: invariants.length,
+      citation_enforcement: {
+        mode: ctx ? ctx.mode : 'unenforced',
+        ...manifest,
+      },
+      summary,
+    },
+  };
+}
+
+function collectSourceFilesFromAssets(...groups) {
+  const set = new Set();
+  const harvest = (items) => {
+    if (!Array.isArray(items)) return;
+    items.forEach((item) => {
+      if (!item || !Array.isArray(item.citations)) return;
+      item.citations.forEach((c) => {
+        if (c && c.path) set.add(c.path);
+      });
+    });
+  };
+  groups.forEach(harvest);
+  return Array.from(set).slice(0, 16);
+}
+
 module.exports = {
   createBuildDeepWikiPages,
+  buildBusinessLogicFromInventory,
+  renderBusinessLogicPage,
+  buildInventoryEnforcerContext,
 };

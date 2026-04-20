@@ -801,7 +801,10 @@ function deriveEvidenceAssets(knowledgeGraph, pages, diagrams) {
   const top = ranked.slice(0, 12);
   const publishReadySignals = {
     multiSource: new Set(top.map((item) => item.type)).size >= 2,
-    testPollution: top.some((item) => (item.factors || {}).test_penalty < 0),
+    // test_penalty is retained at 0 for back-compat; tests are now a positive
+    // business-rule signal (see evidence-ranker.js inferTestBoost). Flag only
+    // mock/fixture noise (via noise_penalty) as pollution.
+    testPollution: top.some((item) => Number((item.factors || {}).noise_penalty || 0) < -0.15),
     evidenceCount: ranked.length,
   };
   return {

@@ -1,34 +1,38 @@
 {
-  "name": "ai-gateway",
+  "name": "ai-platform",
   "version": "1.0.0",
-  "description": "购商云汇 AI 网关 - 统一 LLM 接入层",
-  "main": "src/index.js",
-  "scripts": {
-    "start": "node src/index.js",
-    "dev": "nodemon src/index.js",
-    "test": "jest",
-    "verify:usage-db": "node scripts/verify-usage-db.js",
-    "test:coverage": "jest --coverage",
-    "lint": "eslint src/"
+  "description": "> 企业级 AI 大模型统一管理平台 | 完全中文版",
+  "main": "test-api-keys.js",
+  "directories": {
+    "doc": "docs"
   },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "phase1:migrate": "node scripts/apply-phase1-migrations.cjs",
+    "knowledge:ingest": "node scripts/ingest-knowledge-assets.cjs",
+    "platform:init": "node scripts/init-platform-pack.cjs",
+    "deepwiki:backfill-projects": "node scripts/backfill-deepwiki-projects.cjs",
+    "deepwiki:v2:verify": "node scripts/verify-deepwiki-v2.cjs",
+    "db:verify:q2": "node scripts/verify-harness-q2-db.cjs",
+    "kb:verify": "node scripts/verify-knowledge-stack.cjs",
+    "kb:model:prepare": "knowledge-base/.venv/bin/python scripts/prepare-embedding-model.py",
+    "approval:broker": "node scripts/codex-approval-broker.cjs once",
+    "approval:broker:watch": "node scripts/codex-approval-broker.cjs watch",
+    "services:install": "node scripts/local-services.cjs install",
+    "services:uninstall": "node scripts/local-services.cjs uninstall",
+    "services:start": "node scripts/local-services.cjs start",
+    "services:stop": "node scripts/local-services.cjs stop",
+    "services:restart": "node scripts/local-services.cjs restart",
+    "services:status": "node scripts/local-services.cjs status",
+    "services:health": "node scripts/local-services.cjs health",
+    "services:logs": "node scripts/local-services.cjs logs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
   "dependencies": {
     "axios": "^1.15.0",
-    "cors": "^2.8.5",
-    "dotenv": "^16.6.1",
-    "express": "^4.18.2",
-    "helmet": "^7.1.0",
-    "mysql2": "^3.20.0",
-    "redis": "^4.6.0",
-    "uuid": "^9.0.0",
-    "winston": "^3.11.0"
-  },
-  "devDependencies": {
-    "eslint": "^8.54.0",
-    "jest": "^29.7.0",
-    "nodemon": "^3.0.1",
-    "supertest": "^7.2.2"
-  },
-  "engines": {
-    "node": ">=20"
+    "dotenv": "^17.4.1"
   }
 }

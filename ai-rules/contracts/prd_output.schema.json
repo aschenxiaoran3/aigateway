@@ -1,0 +1,10 @@
+{
+  "title": "PRD Output",
+  "type": "object",
+  "required": ["artifact_type", "title", "content_text"],
+  "properties": {
+    "artifact_type": { "type": "string", "const": "prd" },
+    "title": { "type": "string" },
+    "content_text": { "type": "string" }
+  }
+}

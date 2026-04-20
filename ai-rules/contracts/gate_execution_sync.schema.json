@@ -1,0 +1,10 @@
+{
+  "title": "Gate Execution Sync",
+  "type": "object",
+  "required": ["gate_name", "gate_type", "trace_id"],
+  "properties": {
+    "gate_name": { "type": "string" },
+    "gate_type": { "type": "string" },
+    "trace_id": { "type": "string" }
+  }
+}

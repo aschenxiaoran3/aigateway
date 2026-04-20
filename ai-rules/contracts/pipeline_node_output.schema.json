@@ -1,0 +1,11 @@
+{
+  "title": "Pipeline Node Output",
+  "type": "object",
+  "required": ["status", "summary"],
+  "properties": {
+    "status": { "type": "string" },
+    "summary": { "type": "string" },
+    "output_payload": { "type": ["object", "null"] },
+    "evidence_refs": { "type": ["array", "null"] }
+  }
+}

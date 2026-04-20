@@ -1,0 +1,10 @@
+DROP TABLE IF EXISTS `gateway_wiki_feedback_events`;
+DROP TABLE IF EXISTS `gateway_wiki_semantic_scores`;
+DROP TABLE IF EXISTS `gateway_wiki_scenarios`;
+DROP TABLE IF EXISTS `gateway_wiki_assertions`;
+DROP TABLE IF EXISTS `gateway_wiki_flow_steps`;
+DROP TABLE IF EXISTS `gateway_wiki_flows`;
+DROP TABLE IF EXISTS `gateway_wiki_consistency_checks`;
+DROP TABLE IF EXISTS `gateway_wiki_snapshot_repo_revisions`;
+DROP TABLE IF EXISTS `gateway_wiki_branch_repo_mappings`;
+DROP TABLE IF EXISTS `gateway_wiki_branches`;

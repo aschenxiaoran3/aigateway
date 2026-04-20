@@ -1,0 +1,9 @@
+version: "1.0.0"
+document: test_plan
+sections:
+  - { id: strategy, title: 测试策略, required: true }
+  - { id: entry_exit, title: 入口/出口标准, required: true }
+  - { id: env_data, title: 环境与数据, required: true }
+  - { id: rtm, title: 需求追溯矩阵（RTM）, required: true }
+  - { id: ac_map, title: AC 对照, required: true }
+  - { id: cases, title: 测试用例库, required: true }

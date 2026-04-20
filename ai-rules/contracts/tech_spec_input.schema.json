@@ -1,0 +1,10 @@
+{
+  "title": "Tech Spec Input",
+  "type": "object",
+  "required": ["bundle_id", "artifact_type", "content_text"],
+  "properties": {
+    "bundle_id": { "type": "integer" },
+    "artifact_type": { "type": "string", "const": "tech_spec" },
+    "content_text": { "type": "string" }
+  }
+}

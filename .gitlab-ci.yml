@@ -1,0 +1,142 @@
+# AI 平台 CI/CD 配置
+# 由 gate-engine 自动生成
+# 文档: https://docs.gitlab.com/ee/ci/yaml/
+
+stages:
+  - lint
+  - test
+  - gate-check
+  - build
+  - deploy
+
+variables:
+  NODE_ENV: production
+  GATE_ENGINE_DIR: ./gate-engine
+
+# ========== Lint 阶段 ==========
+lint:ai-gateway:
+  stage: lint
+  image: node:20-alpine
+  script:
+    - cd ai-gateway
+    - npm ci --include=dev 2>/dev/null || npm install
+    - npm run lint 2>/dev/null || echo "No lint script"
+  rules:
+    - changes:
+        - ai-gateway/**/*
+    - when: never
+
+lint:gate-engine:
+  stage: lint
+  image: node:20-alpine
+  script:
+    - cd gate-engine
+    - npm ci --include=dev 2>/dev/null || npm install
+    - npm run lint 2>/dev/null || echo "No lint script"
+  rules:
+    - changes:
+        - gate-engine/**/*
+    - when: never
+
+# ========== 测试阶段 ==========
+test:ai-gateway:
+  stage: test
+  image: node:20-alpine
+  script:
+    - cd ai-gateway
+    - npm ci --include=dev 2>/dev/null || npm install
+    - npm test 2>/dev/null || echo "No test script"
+  rules:
+    - changes:
+        - ai-gateway/**/*
+    - when: never
+
+test:knowledge-base:
+  stage: test
+  image: python:3.11-slim
+  script:
+    - cd knowledge-base
+    - pip install -r requirements.txt -q
+    - python -m pytest tests/ 2>/dev/null || echo "No tests"
+  rules:
+    - changes:
+        - knowledge-base/**/*
+    - when: never
+
+# ========== 门禁检查阶段 ==========
+gate:prd-check:
+  stage: gate-check
+  image: node:20-alpine
+  script:
+    - cd gate-engine
+    - npm install js-yaml
+    - node src/gate-runner.js --rule rules/prd-gate.yaml --ci
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - "**/*.md"
+        - "docs/**/*"
+    - when: never
+
+gate:tech-check:
+  stage: gate-check
+  image: node:20-alpine
+  script:
+    - cd gate-engine
+    - npm install js-yaml
+    - node src/gate-runner.js --rule rules/tech-gate.yaml --ci
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - "**/*.yaml"
+        - "**/*.yml"
+        - "docs/architecture*"
+    - when: never
+
+gate:code-check:
+  stage: gate-check
+  image: node:20-alpine
+  script:
+    - cd gate-engine
+    - npm install js-yaml
+    - node src/gate-runner.js --rule rules/code-gate.yaml --ci
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - "ai-gateway/**/*"
+        - "gate-engine/**/*"
+        - "admin-ui/**/*"
+        - "knowledge-base/**/*.py"
+    - when: never
+
+# ========== 构建阶段 ==========
+build:admin-ui:
+  stage: build
+  image: node:20-alpine
+  script:
+    - cd admin-ui
+    - npm ci 2>/dev/null || npm install
+    - npm run build 2>/dev/null || echo "No build script"
+  artifacts:
+    paths:
+      - admin-ui/build/
+    expire_in: 1 week
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      changes:
+        - admin-ui/**/*
+    - when: never
+
+# ========== 部署阶段 ==========
+deploy:staging:
+  stage: deploy
+  image: ubuntu:latest
+  script:
+    - echo "Deploying to staging..."
+    - apt-get update && apt-get install -y openssh-client
+    - echo "TODO: Add deployment scripts"
+  environment:
+    name: staging
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - when: never

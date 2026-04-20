@@ -1,0 +1,32 @@
+{
+  "name": "ai-platform-control-plane",
+  "version": "1.0.0",
+  "private": true,
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "test": "node --test tests/*.test.js",
+    "deepwiki:contracts": "node src/deepwiki/cli.js contracts",
+    "deepwiki:scan": "node src/deepwiki/cli.js scan",
+    "deepwiki:build": "node src/deepwiki/cli.js build",
+    "deepwiki:audit": "node src/deepwiki/cli.js audit"
+  },
+  "dependencies": {
+    "axios": "^1.15.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^4.18.2",
+    "helmet": "^7.1.0",
+    "js-yaml": "^4.1.0",
+    "mysql2": "^3.20.0",
+    "uuid": "^9.0.0",
+    "winston": "^3.11.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

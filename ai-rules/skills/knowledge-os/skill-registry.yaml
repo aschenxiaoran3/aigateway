@@ -1,0 +1,29 @@
+# AI Knowledge OS — Skill 注册表（与 control-plane deepwiki 编排对齐）
+version: "1.0.0"
+namespace: knowledge-os
+
+skills:
+  - key: repo_understanding_skill
+    layer: repo_understanding
+    version: "1.0.0"
+    inputs: [project.config]
+    outputs: [project_topology, repo_manifest_set, repo_role_matrix, subsystem_clusters]
+    algorithm: builtin:deriveRepoUnderstanding@v1
+  - key: structure_extraction_skill
+    layer: structure_extraction
+    version: "1.0.0"
+    inputs: [project_topology]
+    outputs: [symbols, call_graph, route_graph, cross_repo_edges, layer_classification, layered_architecture]
+    algorithm: builtin:deriveStructureAssets@v1
+  - key: coverage_skill
+    layer: quality
+    version: "1.0.0"
+    inputs: [repo_inventory, wiki_pages, knowledge_graph]
+    outputs: [coverage.expected, coverage.observed, coverage.report]
+    algorithm: builtin:coverage_gate@v1
+  - key: doc_projection_skill
+    layer: docs
+    version: "1.0.0"
+    inputs: [repo_inventory, deep_research, coverage.report, doc_standards]
+    outputs: [docs.prd, docs.tech_spec, docs.test_plan]
+    algorithm: builtin:markdown_projection@v1

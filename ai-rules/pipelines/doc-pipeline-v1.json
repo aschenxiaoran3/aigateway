@@ -1,0 +1,15 @@
+{
+  "pipeline_key": "doc-pipeline-v1",
+  "name": "文档工程化标准管道",
+  "nodes": [
+    "input_contract",
+    "prd_gate",
+    "repo_context_build",
+    "tech_spec_generate",
+    "tech_spec_gate",
+    "coverage_graph",
+    "test_plan_generate",
+    "test_plan_gate",
+    "publish"
+  ]
+}

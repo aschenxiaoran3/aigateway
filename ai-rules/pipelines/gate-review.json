@@ -1,0 +1,10 @@
+{
+  "pipeline_key": "gate-review",
+  "name": "统一门禁评审链路",
+  "nodes": [
+    "rule_bind",
+    "gate_execute",
+    "approval_or_override",
+    "evidence_archive"
+  ]
+}

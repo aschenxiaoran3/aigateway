@@ -1,0 +1,11 @@
+version: "1.0.0"
+document: tech_spec
+sections:
+  - { id: tech_arch, title: 技术架构, required: true }
+  - { id: flows, title: 业务流程, required: true }
+  - { id: sequence, title: 时序图, required: true }
+  - { id: core_logic, title: 核心逻辑, required: true }
+  - { id: er, title: ER 设计, required: true }
+  - { id: concurrency, title: 并发与一致性, required: true }
+  - { id: code_standards, title: 代码规范与分层, required: true }
+  - { id: sql, title: 表结构与 SQL, required: false }

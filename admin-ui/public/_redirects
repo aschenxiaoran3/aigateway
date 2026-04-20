@@ -1,0 +1,2 @@
+# Netlify：所有非静态资源路径回退到 index.html（React Router history 模式）
+/*    /index.html   200

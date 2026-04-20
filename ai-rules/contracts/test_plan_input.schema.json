@@ -1,0 +1,9 @@
+{
+  "title": "Test Plan Input",
+  "type": "object",
+  "required": ["bundle_id", "coverage_graph_run_id"],
+  "properties": {
+    "bundle_id": { "type": "integer" },
+    "coverage_graph_run_id": { "type": "integer" }
+  }
+}

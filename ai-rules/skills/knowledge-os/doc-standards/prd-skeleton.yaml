@@ -1,0 +1,11 @@
+version: "1.0.0"
+document: prd
+sections:
+  - { id: product_overview, title: 产品概述, required: true }
+  - { id: goals, title: 产品目标, required: true }
+  - { id: roles, title: 用户角色, required: true }
+  - { id: architecture, title: 产品架构, required: true }
+  - { id: flows, title: 业务流程, required: true }
+  - { id: state, title: 状态流转, required: true }
+  - { id: acceptance_gwt, title: 验收标准（GWT / AC）, required: true }
+  - { id: consistency, title: 一致性约束与恒等式, required: true }

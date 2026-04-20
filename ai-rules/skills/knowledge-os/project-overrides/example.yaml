@@ -1,0 +1,8 @@
+# 示例：按 repo_slug 覆写门禁与关键域（复制为 <repo_slug>.yaml）
+version: "1.0.0"
+repo_slug: example-service
+coverage:
+  min_overall_score: 0.45
+optional_domains:
+  - billing
+  - inventory

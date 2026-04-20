@@ -1,0 +1,12 @@
+{
+  "pipeline_key": "p03-ops-release-closure-v1",
+  "name": "P03 运维管道发布闭环 V1.0",
+  "nodes": [
+    "release_request_ingest",
+    "code_review_generate",
+    "build_collect",
+    "release_verify",
+    "rollback_check",
+    "evidence_archive"
+  ]
+}

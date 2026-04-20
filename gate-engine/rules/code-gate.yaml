@@ -1,0 +1,249 @@
+# 代码质量门禁规则配置
+# 版本：1.0
+# 阶段：阶段一 (2026 年 3-4 月)
+
+gate:
+  name: 代码质量门禁
+  version: 1.0
+  stage: code
+  description: 代码准入检查，确保代码质量、测试覆盖、安全规范达标
+
+checks:
+  # ========== 代码审查 ==========
+  - name: Code Review 完成
+    type: required_field
+    field: code_reviewed
+    required: true
+    message: "❌ 代码必须经过至少一人 Review"
+    success_message: "✅ Code Review 已完成"
+    weight: 15
+
+  - name: Review 意见处理
+    type: checklist
+    field: review_items
+    items:
+      - 逻辑正确性
+      - 命名规范
+      - 代码复杂度
+      - 重复代码消除
+      - 注释完整性
+    min_pass: 4
+    message: "❌ Review 意见未充分处理，至少解决 4 项"
+    success_message: "✅ Review 意见已处理"
+    weight: 10
+
+  # ========== 单元测试覆盖率 ==========
+  - name: 单元测试覆盖率
+    type: coverage_check
+    min_coverage: 80
+    target: overall
+    message: "❌ 单元测试覆盖率低于 80%，当前：{{current_coverage}}%"
+    success_message: "✅ 单元测试覆盖率达标：{{current_coverage}}%"
+    weight: 20
+
+  - name: 新增代码覆盖率
+    type: coverage_check
+    min_coverage: 90
+    target: changed_lines
+    message: "❌ 新增代码覆盖率低于 90%"
+    success_message: "✅ 新增代码覆盖率达标"
+    weight: 15
+
+  - name: 关键路径测试
+    type: checklist
+    field: critical_paths
+    items:
+      - 核心业务逻辑有测试
+      - 边界条件有测试
+      - 异常流程有测试
+      - 并发场景有测试
+    min_pass: 3
+    message: "❌ 关键路径测试不完整，至少覆盖 3 项"
+    success_message: "✅ 关键路径测试覆盖完整"
+    weight: 10
+
+  # ========== 代码风格/Lint ==========
+  - name: Lint 检查通过
+    type: lint_check
+    tool: eslint
+    allowed_warnings: 0
+    allowed_errors: 0
+    message: "❌ Lint 检查存在错误或警告"
+    success_message: "✅ Lint 检查通过，无错误和警告"
+    weight: 15
+
+  - name: 代码格式规范
+    type: lint_check
+    tool: prettier
+    allowed_errors: 0
+    message: "❌ 代码格式不符合 Prettier 规范"
+    success_message: "✅ 代码格式规范"
+    weight: 10
+
+  - name: 注释覆盖率
+    type: pattern_check
+    field: code_comments
+    pattern: "//.*|/\\*.*\\*/|\\* @|\\* "
+    min_matches: 1
+    message: "⚠️ 代码缺少必要注释，公共方法应有文档注释"
+    weight: 5
+
+  # ========== 安全漏洞扫描 ==========
+  - name: 安全漏洞扫描
+    type: security_scan
+    tool: npm_audit
+    severity_threshold: high
+    allowed_critical: 0
+    allowed_high: 0
+    message: "❌ 发现高危或严重安全漏洞"
+    success_message: "✅ 安全漏洞扫描通过"
+    weight: 20
+
+  - name: SAST 静态分析
+    type: security_scan
+    tool: semgrep
+    ruleset: security
+    allowed_findings: 0
+    message: "❌ SAST 静态分析发现安全问题"
+    success_message: "✅ SAST 静态分析通过"
+    weight: 15
+
+  - name: 无硬编码密钥
+    type: secret_scan
+    patterns:
+      - "password\\s*=\\s*['\"][^'\"]+['\"]"
+      - "secret\\s*=\\s*['\"][^'\"]+['\"]"
+      - "api_key\\s*=\\s*['\"][^'\"]+['\"]"
+      - "AKIA[0-9A-Z]{16}"
+      - "ghp_[A-Za-z0-9_]{36}"
+    exclude_files:
+      - "*.test.*"
+      - "*.spec.*"
+      - "test/"
+      - "__tests__/"
+    message: "❌ 发现硬编码密钥或敏感信息，请使用环境变量或密钥管理服务"
+    success_message: "✅ 未发现硬编码密钥"
+    weight: 20
+
+  # ========== 依赖检查 ==========
+  - name: 依赖版本检查
+    type: dependency_check
+    check_outdated: true
+    allowed_outdated: 5
+    message: "⚠️ 存在过多过时依赖，建议更新"
+    success_message: "✅ 依赖版本检查通过"
+    weight: 10
+
+  - name: 许可证合规
+    type: dependency_check
+    check_licenses: true
+    forbidden_licenses:
+      - GPL-3.0
+      - AGPL-3.0
+    message: "❌ 存在不兼容的许可证依赖"
+    success_message: "✅ 许可证合规检查通过"
+    weight: 10
+
+  - name: 依赖数量检查
+    type: dependency_check
+    max_dependencies: 200
+    message: "⚠️ 依赖数量过多，建议精简"
+    success_message: "✅ 依赖数量合理"
+    weight: 5
+
+  # ========== 错误处理 ==========
+  - name: 错误处理规范
+    type: checklist
+    field: error_handling
+    items:
+      - 异步操作有 try-catch
+      - 错误有明确日志
+      - 用户友好的错误提示
+      - 资源清理（finally/defer）
+      - 重试机制（如适用）
+    min_pass: 4
+    message: "❌ 错误处理不完整，至少覆盖 4 项"
+    success_message: "✅ 错误处理规范"
+    weight: 15
+
+  - name: 异常类型使用
+    type: pattern_check
+    field: error_types
+    pattern: "throw new \\w+Error|Error\\(|new Error"
+    min_matches: 1
+    message: "⚠️ 建议使用明确的错误类型而非泛型 Error"
+    weight: 5
+
+# ========== 通过标准 ==========
+pass_criteria:
+  min_total_score: 75  # 总分至少 75 分
+  required_checks:     # 必须通过的检查
+    - 单元测试覆盖率
+    - Lint 检查通过
+    - 安全漏洞扫描
+    - 无硬编码密钥
+    - 错误处理规范
+
+# ========== 失败处理 ==========
+on_fail:
+  action: block          # block: 阻止合并 / warn: 仅警告
+  notify:
+    - type: dingtalk
+      target: dev_group
+      template: |
+        🔔 代码质量门禁检查未通过
+        
+        📄 提交：{{commit_hash}}
+        👤 作者：{{author}}
+        ❌ 失败项：{{failed_checks}}
+        📊 得分：{{total_score}} / {{max_score}}
+        
+        请修复后重新提交。
+    - type: gitlab
+      action: comment_on_mr
+      template: |
+        ## ❌ 代码质量门禁检查未通过
+        
+        | 检查项 | 状态 | 详情 |
+        |--------|------|------|
+        {{#each checks}}
+        | {{name}} | {{#if passed}}✅{{else}}❌{{/if}} | {{message}} |
+        {{/each}}
+  retry_allowed: true
+  retry_cooldown_minutes: 2
+
+# ========== 成功处理 ==========
+on_success:
+  notify:
+    - type: dingtalk
+      target: dev_group
+      template: |
+        ✅ 代码质量门禁检查通过
+        
+        📄 提交：{{commit_hash}}
+        👤 作者：{{author}}
+        📊 得分：{{total_score}} / {{max_score}}
+  label:
+    - "code-quality-approved"
+    - "ready-to-merge"
+
+# ========== 豁免规则 ==========
+exemptions:
+  - condition: hotfix
+    approver: tech_lead
+    valid_hours: 12
+    checks_exempt:
+      - 依赖版本检查
+      - 注释覆盖率
+    description: "紧急热修复可由技术负责人豁免部分检查"
+  - condition: dependency_update_only
+    checks_exempt:
+      - Code Review 完成
+      - 单元测试覆盖率
+    description: "纯依赖更新可豁免部分检查"
+  - condition: documentation_only
+    checks_exempt:
+      - 单元测试覆盖率
+      - 新增代码覆盖率
+      - Lint 检查通过
+    description: "纯文档更新可豁免代码相关检查"

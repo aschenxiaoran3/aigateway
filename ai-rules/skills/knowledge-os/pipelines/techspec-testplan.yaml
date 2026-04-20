@@ -1,0 +1,8 @@
+version: "1.0.0"
+pipeline_id: techspec-to-testplan
+description: 技术方案 + DeepWiki → 测试方案（投影层）
+stages:
+  - scenario_builder
+  - test_case_generator
+  - assertion_builder
+  - test_plan_writer

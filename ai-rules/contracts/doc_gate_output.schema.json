@@ -1,0 +1,12 @@
+{
+  "title": "Doc Gate Output",
+  "type": "object",
+  "required": ["status", "summary", "checks", "citations", "evaluator_meta"],
+  "properties": {
+    "status": { "type": "string" },
+    "summary": { "type": "string" },
+    "checks": { "type": "array" },
+    "citations": { "type": "array" },
+    "evaluator_meta": { "type": "object" }
+  }
+}

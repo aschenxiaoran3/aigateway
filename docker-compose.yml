@@ -1,0 +1,223 @@
+# AI 平台 - Docker Compose 部署配置
+# 阶段一：完整部署，包含所有核心服务
+#
+# 使用方式:
+#   docker-compose up -d          # 启动所有服务
+#   docker-compose up -d --build  # 重新构建并启动
+#   docker-compose logs -f        # 查看日志
+#   docker-compose down           # 停止所有服务
+
+services:
+  # ========== 管理页面 (前端) ==========
+  admin-ui:
+    build:
+      context: ./admin-ui
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    depends_on:
+      ai-gateway:
+        condition: service_healthy
+      control-plane:
+        condition: service_healthy
+    networks:
+      - ai-platform
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  # ========== AI 网关 (后端 API) ==========
+  ai-gateway:
+    build:
+      context: ./ai-gateway
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - REDIS_URL=redis://redis:6379
+      - CONTROL_PLANE_BASE_URL=http://control-plane:3104
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    volumes:
+      - gateway-logs:/app/logs
+      - gateway-data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - ai-platform
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  # ========== AI 工程化控制平面 ==========
+  control-plane:
+    build:
+      context: ./control-plane
+      dockerfile: Dockerfile
+    ports:
+      - "3104:3104"
+    environment:
+      - NODE_ENV=production
+      - PORT=3104
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT:-3306}
+      - DB_USER=${DB_USER}
+      - DB_PASS=${DB_PASS}
+      - DB_NAME=${DB_NAME}
+    networks:
+      - ai-platform
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3104/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  # ========== 系统代理层 / 出站拦截 ==========
+  gateway-egress-proxy:
+    build:
+      context: ./gateway-egress-proxy
+      dockerfile: Dockerfile
+    ports:
+      - "8899:8899"
+    environment:
+      - NODE_ENV=production
+      - EGRESS_PROXY_PORT=8899
+      - EGRESS_PROXY_MODE=${EGRESS_PROXY_MODE:-observe}
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT:-3306}
+      - DB_USER=${DB_USER}
+      - DB_PASS=${DB_PASS}
+      - DB_NAME=${DB_NAME}
+    networks:
+      - ai-platform
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8899"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  # ========== 知识库 (RAG 检索服务) ==========
+  knowledge-base:
+    build:
+      context: ./knowledge-base
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - QDRANT_URL=http://qdrant:6333
+      - EMBED_MODEL=BAAI/bge-m3
+      - RERANK_MODEL=BAAI/bge-reranker-v2-m3
+      - ALLOW_FALLBACK_EMBEDDING=0
+    volumes:
+      - kb-data:/app/data
+      - kb-models:/app/models
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    networks:
+      - ai-platform
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # ========== 门禁系统 ==========
+  gate-engine:
+    build:
+      context: ./gate-engine
+      dockerfile: Dockerfile
+    ports:
+      - "3002:3002"
+    environment:
+      - NODE_ENV=production
+      - PORT=3002
+      - KNOWLEDGE_BASE_URL=http://knowledge-base:8000
+      - GITLAB_URL=${GITLAB_URL:-https://gitlab.example.com}
+      - GITLAB_PRIVATE_TOKEN=${GITLAB_PRIVATE_TOKEN}
+      - GITLAB_WEBHOOK_SECRET=${GITLAB_WEBHOOK_SECRET}
+    volumes:
+      - gate-logs:/app/logs
+      - ./gate-engine/rules:/app/rules:ro
+    networks:
+      - ai-platform
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3002/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  # ========== Qdrant 向量数据库 ==========
+  qdrant:
+    image: qdrant/qdrant:v1.7.0
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant-storage:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    networks:
+      - ai-platform
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/6333"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  # ========== Redis (配额管理 + 缓存) ==========
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    networks:
+      - ai-platform
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+# ========== 网络 ==========
+networks:
+  ai-platform:
+    driver: bridge
+
+# ========== 数据卷 ==========
+volumes:
+  gateway-logs:
+  gateway-data:
+  kb-data:
+  kb-models:
+  gate-logs:
+  qdrant-storage:
+  redis-data:

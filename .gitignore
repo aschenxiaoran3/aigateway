@@ -1,18 +1,18 @@
-# 环境变量文件 - 包含敏感信息
 .env
 .env.local
 .env.*.local
+.env.shared.local
 
-# 日志文件
+.DS_Store
+node_modules/
 logs/
-*.log
+.runtime/
+dist/
+coverage/
 data/
 storage/
-coverage/
-
-# 依赖
-node_modules/
-
-# 构建输出
-dist/
-build/
+tmp/
+.venv/
+.pytest_cache/
+__pycache__/
+*.pyc

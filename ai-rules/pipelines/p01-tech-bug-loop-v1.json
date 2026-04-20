@@ -1,0 +1,15 @@
+{
+  "pipeline_key": "p01-tech-bug-loop-v1",
+  "name": "P01 技术管道 Bug 闭环 V1.0",
+  "nodes": [
+    "event_ingest",
+    "bug_structured_parse",
+    "solution_generate",
+    "human_confirm",
+    "patch_apply",
+    "unit_test",
+    "db_sandbox_validate",
+    "tb_writeback",
+    "evidence_archive"
+  ]
+}

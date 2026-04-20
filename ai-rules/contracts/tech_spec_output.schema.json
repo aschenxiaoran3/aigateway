@@ -1,0 +1,10 @@
+{
+  "title": "Tech Spec Output",
+  "type": "object",
+  "required": ["artifact_type", "title", "content_text"],
+  "properties": {
+    "artifact_type": { "type": "string", "const": "tech_spec" },
+    "title": { "type": "string" },
+    "content_text": { "type": "string" }
+  }
+}

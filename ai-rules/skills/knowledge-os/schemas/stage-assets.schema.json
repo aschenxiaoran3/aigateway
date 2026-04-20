@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StageAssets",
+  "type": "object",
+  "required": ["run_id", "repo", "skills_spec_version", "assets"],
+  "properties": {
+    "run_id": { "type": "string" },
+    "repo": {
+      "type": "object",
+      "properties": {
+        "slug": { "type": "string" },
+        "branch": { "type": "string" },
+        "commit": { "type": "string" }
+      }
+    },
+    "skills_spec_version": { "type": "string" },
+    "assets": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["type", "uri"],
+        "properties": {
+          "type": { "type": "string" },
+          "uri": { "type": "string" },
+          "meta": { "type": "object" }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "pipeline_key": "p05-product-value-evaluation-v1",
+  "name": "P05 产品管道价值初评 V1.0",
+  "nodes": [
+    "demand_ingest",
+    "feature_extract",
+    "historical_retrieve",
+    "value_assessment",
+    "product_confirm",
+    "evidence_archive"
+  ]
+}

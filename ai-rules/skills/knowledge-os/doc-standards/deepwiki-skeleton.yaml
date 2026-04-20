@@ -1,0 +1,37 @@
+version: "1.0.0"
+document: deepwiki
+sections_project:
+  - id: overview
+    title: 项目总览
+    required: true
+  - id: architecture
+    title: 整体架构与模块划分
+    required: true
+  - id: layering
+    title: 代码分层与依赖
+    required: true
+  - id: data_flow
+    title: 数据流向
+    required: true
+  - id: tech_stack
+    title: 技术栈与部署
+    required: true
+  - id: standards
+    title: 开发规范
+    required: false
+sections_domain:
+  - id: domain_overview
+    title: 领域总览
+    required: true
+  - id: context_map
+    title: Context Map
+    required: false
+  - id: flows
+    title: 业务流程与时序
+    required: true
+  - id: data_model
+    title: 数据模型 / ER
+    required: true
+  - id: evidence
+    title: 证据来源（文件/API/表）
+    required: true

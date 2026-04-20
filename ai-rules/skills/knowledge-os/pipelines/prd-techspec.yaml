@@ -1,0 +1,8 @@
+version: "1.0.0"
+pipeline_id: prd-to-techspec
+description: PRD + DeepWiki published snapshot → 技术方案（投影层）
+stages:
+  - prd_parser
+  - requirement_mapper
+  - domain_impact
+  - tech_spec_builder

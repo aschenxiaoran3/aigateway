@@ -1,0 +1,21 @@
+CREATE TABLE IF NOT EXISTS `gateway_egress_events` (
+  `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+  `event_type` VARCHAR(32) NOT NULL,
+  `client_name` VARCHAR(64) NULL,
+  `method` VARCHAR(16) NOT NULL,
+  `target_scheme` VARCHAR(16) NOT NULL,
+  `target_host` VARCHAR(255) NOT NULL,
+  `target_port` INT NOT NULL,
+  `target_path` VARCHAR(255) NULL,
+  `decision` VARCHAR(16) NOT NULL,
+  `llm_host` TINYINT(1) NOT NULL DEFAULT 0,
+  `matched_pattern` VARCHAR(255) NULL,
+  `user_agent` VARCHAR(255) NULL,
+  `trace_id` VARCHAR(64) NULL,
+  `detail_json` JSON NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX `idx_egress_events_created_at` (`created_at`),
+  INDEX `idx_egress_events_target_host` (`target_host`),
+  INDEX `idx_egress_events_client_name` (`client_name`),
+  INDEX `idx_egress_events_llm_host` (`llm_host`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='系统代理层出站事件';

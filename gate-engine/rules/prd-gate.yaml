@@ -1,0 +1,155 @@
+# PRD 门禁规则配置
+# 版本：1.0
+# 阶段：阶段一 (2026 年 3-4 月)
+
+gate:
+  name: PRD 门禁
+  version: 1.0
+  stage: product
+  description: PRD 文档准入检查，确保 AI 初稿 + 自检清单 + 价值评估完整
+
+checks:
+  # ========== 基础检查 ==========
+  - name: AI 初稿检查
+    type: required_field
+    field: ai_generated
+    required: true
+    message: "❌ PRD 必须包含 AI 生成标识和初稿内容"
+    success_message: "✅ AI 初稿标识存在"
+    weight: 10
+
+  - name: 文档格式检查
+    type: format_check
+    format: markdown
+    required_sections:
+      - 需求背景
+      - 用户故事
+      - 功能描述
+      - 验收标准
+    message: "❌ PRD 缺少必需章节"
+    weight: 10
+
+  # ========== 自检清单 ==========
+  - name: 自检清单
+    type: checklist
+    field: self_check_list
+    items:
+      - 需求背景清晰
+      - 用户故事完整
+      - 验收标准可量化
+      - 字段定义规范
+      - 边界场景覆盖
+      - 数据兼容性说明
+    min_pass: 4
+    message: "❌ 自检清单至少通过 4 项"
+    success_message: "✅ 自检清单通过"
+    weight: 15
+
+  # ========== 价值评估 ==========
+  - name: 大数据价值评估
+    type: required_field
+    field: value_assessment
+    required: true
+    sub_fields:
+      - business_value
+      - data_source
+      - expected_impact
+    message: "❌ 必须附带大数据价值评估报告（含业务价值、数据来源、预期影响）"
+    weight: 15
+
+  # ========== 知识库一致性 ==========
+  - name: 术语一致性
+    type: knowledge_check
+    knowledge_base: true
+    check_field: terminology
+    min_similarity: 0.8
+    message: "⚠️ 术语与企业知识库不一致，请检查"
+    weight: 10
+
+  - name: 历史 PRD 参考
+    type: rag_reference
+    knowledge_base: true
+    min_references: 2
+    message: "⚠️ 至少参考 2 份历史 PRD 文档"
+    weight: 10
+
+  # ========== 质量检查 ==========
+  - name: 用户故事格式
+    type: pattern_check
+    field: user_stories
+    pattern: "作为.*我能够.*以便.*"
+    min_matches: 1
+    message: "⚠️ 用户故事格式不符合标准（作为...我能够...以便...）"
+    weight: 10
+
+  - name: 验收标准可量化
+    type: pattern_check
+    field: acceptance_criteria
+    pattern: "\\d+.*%|\\d+.*秒|\\d+.*个"
+    min_matches: 1
+    message: "⚠️ 验收标准应包含可量化的指标"
+    weight: 10
+
+  - name: 字段定义规范
+    type: pattern_check
+    field: data_fields
+    pattern: "字段名.*类型.*说明"
+    min_matches: 1
+    message: "⚠️ 字段定义应包含字段名、类型、说明"
+    weight: 10
+
+# ========== 通过标准 ==========
+pass_criteria:
+  min_total_score: 70  # 总分至少 70 分
+  required_checks:     # 必须通过的检查
+    - AI 初稿检查
+    - 文档格式检查
+    - 大数据价值评估
+
+# ========== 失败处理 ==========
+on_fail:
+  action: block          # block: 阻止进入下一环节 / warn: 仅警告
+  notify:
+    - type: dingtalk
+      target: product_group
+      template: |
+        🔔 PRD 门禁检查未通过
+        
+        📄 文档：{{document_name}}
+        👤 作者：{{author}}
+        ❌ 失败项：{{failed_checks}}
+        
+        请及时修改后重新提交。
+    - type: teambition
+      action: create_task
+      assignee: {{author}}
+      title: "PRD 门禁检查未通过：{{document_name}}"
+  retry_allowed: true
+  retry_cooldown_minutes: 5
+
+# ========== 成功处理 ==========
+on_success:
+  notify:
+    - type: dingtalk
+      target: product_group
+      template: |
+        ✅ PRD 门禁检查通过
+        
+        📄 文档：{{document_name}}
+        👤 作者：{{author}}
+        📊 得分：{{total_score}}
+        
+        可以进入评审环节。
+  label:
+    - "pr-approved"
+    - "ai-generated"
+
+# ========== 豁免规则 ==========
+exemptions:
+  - condition: emergency_release
+    approver: product_director
+    valid_hours: 24
+    description: "紧急发布可由产品总监豁免"
+  - condition: minor_update
+    change_threshold: 10  # 变更内容少于 10%
+    description: "微小更新可豁免部分检查"

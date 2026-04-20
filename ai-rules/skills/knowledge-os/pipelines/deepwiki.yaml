@@ -1,0 +1,19 @@
+# DeepWiki 主链 DAG（逻辑阶段名；与 mysql DEEPWIKI_STAGE_ORDER 对应关系见文档）
+version: "1.0.0"
+pipeline_id: deepwiki-main
+stages:
+  - repo_prepare
+  - repo_inventory
+  - module_digest
+  - deep_research_outline
+  - diagram_synthesis
+  - wiki_render
+  - knowledge_extract
+  - coverage_check
+  - coverage_repair
+  - doc_projection_md
+  - knowledge_register
+  - community_index
+  - rag_ingest
+  - retrieval_eval
+  - publish

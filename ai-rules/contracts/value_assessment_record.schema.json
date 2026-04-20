@@ -1,0 +1,12 @@
+{
+  "title": "Value Assessment Record",
+  "type": "object",
+  "required": ["demand_title", "assessment_score", "confirm_owner"],
+  "properties": {
+    "demand_title": { "type": "string" },
+    "assessment_score": { "type": "number" },
+    "value_summary": { "type": "string" },
+    "confirm_owner": { "type": "string" },
+    "risk_notes": { "type": "array" }
+  }
+}

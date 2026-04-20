@@ -1,0 +1,12 @@
+{
+  "pipeline_key": "p02-test-automation-v1",
+  "name": "P02 测试管道自动化 V1.0",
+  "nodes": [
+    "bug_ingest",
+    "bug_fill_agent",
+    "case_generate",
+    "test_execute",
+    "daily_report",
+    "evidence_archive"
+  ]
+}

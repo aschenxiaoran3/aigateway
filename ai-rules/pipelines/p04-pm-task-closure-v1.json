@@ -1,0 +1,12 @@
+{
+  "pipeline_key": "p04-pm-task-closure-v1",
+  "name": "P04 项管管道任务闭环 V1.0",
+  "nodes": [
+    "demand_ingest",
+    "task_split",
+    "owner_confirm",
+    "daily_reminder",
+    "risk_escalate",
+    "evidence_archive"
+  ]
+}

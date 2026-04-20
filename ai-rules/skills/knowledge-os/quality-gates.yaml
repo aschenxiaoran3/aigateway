@@ -1,0 +1,13 @@
+version: "1.0.0"
+coverage:
+  min_overall_score: 0.35
+  min_module_ratio: 0.5
+  min_api_ratio: 0.2
+  min_table_ratio: 0.2
+  block_publish_on_fail: false
+weak_graph:
+  require_action_verb_in_mermaid: true
+  min_actor_nodes: 1
+cross_repo:
+  expect_roles: [frontend_view, service]
+  min_roles_satisfied: 1

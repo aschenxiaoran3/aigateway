@@ -1,0 +1,228 @@
+# 技术方案门禁规则配置
+# 版本：1.0
+# 阶段：阶段一 (2026 年 3-4 月)
+
+gate:
+  name: 技术方案门禁
+  version: 1.0
+  stage: design
+  description: 技术方案文档准入检查，确保架构设计、接口定义、数据库设计等完整规范
+
+checks:
+  # ========== 架构设计检查 ==========
+  - name: 架构设计图检查
+    type: required_field
+    field: 架构图
+    required: true
+    message: "❌ 技术方案必须包含架构图（系统架构图、部署图或组件图）"
+    success_message: "✅ 架构图已包含"
+    weight: 15
+
+  - name: 架构层次清晰
+    type: checklist
+    field: architecture_layers
+    items:
+      - 展示层/接入层
+      - 业务逻辑层
+      - 数据访问层
+      - 基础设施层
+    min_pass: 3
+    message: "❌ 架构层次说明不完整，至少覆盖 3 个层次"
+    success_message: "✅ 架构层次描述完整"
+    weight: 10
+
+  - name: 技术选型说明
+    type: required_field
+    field: 技术选型
+    required: true
+    message: "❌ 必须说明关键技术选型及理由"
+    success_message: "✅ 技术选型已说明"
+    weight: 10
+
+  # ========== API 接口一致性检查 ==========
+  - name: API 接口定义完整
+    type: format_check
+    format: markdown
+    required_sections:
+      - 接口列表
+      - 请求参数
+      - 响应格式
+      - 错误码定义
+    message: "❌ API 接口定义不完整，缺少必需章节"
+    weight: 15
+
+  - name: RESTful 规范检查
+    type: pattern_check
+    field: api_path
+    pattern: "GET.*|POST.*|PUT.*|DELETE.*|PATCH.*"
+    min_matches: 1
+    message: "⚠️ API 接口应标注 HTTP 方法（GET/POST/PUT/DELETE）"
+    weight: 10
+
+  - name: 接口命名规范
+    type: pattern_check
+    field: api_naming
+    pattern: "/api/v\\d+/"
+    min_matches: 1
+    message: "⚠️ API 路径应包含版本号（如 /api/v1/...）"
+    weight: 10
+
+  - name: 请求/响应示例
+    type: checklist
+    field: api_examples
+    items:
+      - 请求示例
+      - 响应示例
+      - 错误响应示例
+    min_pass: 2
+    message: "⚠️ 接口应提供请求和响应示例"
+    success_message: "✅ 接口示例完整"
+    weight: 10
+
+  # ========== 数据库设计检查 ==========
+  - name: 数据库设计说明
+    type: format_check
+    format: markdown
+    required_sections:
+      - 数据模型
+      - 表结构设计
+      - 索引设计
+    message: "❌ 数据库设计不完整，缺少必需章节"
+    weight: 15
+
+  - name: 表字段定义规范
+    type: pattern_check
+    field: table_definition
+    pattern: "字段名.*类型.*约束.*说明|字段.*类型.*说明"
+    min_matches: 1
+    message: "⚠️ 表字段定义应包含字段名、类型、约束、说明"
+    weight: 10
+
+  - name: 索引与优化说明
+    type: required_field
+    field: 索引
+    required: true
+    message: "❌ 必须说明关键表的索引设计"
+    success_message: "✅ 索引设计已说明"
+    weight: 10
+
+  # ========== 安全性检查 ==========
+  - name: 安全设计审查
+    type: checklist
+    field: security_checklist
+    items:
+      - 身份认证方案
+      - 权限控制设计
+      - 数据加密方案
+      - 输入校验策略
+      - 敏感信息保护
+      - 日志脱敏
+    min_pass: 4
+    message: "❌ 安全设计不完整，至少通过 4 项检查"
+    success_message: "✅ 安全设计审查通过"
+    weight: 15
+
+  - name: 认证授权方案
+    type: required_field
+    field: 认证
+    required: true
+    message: "❌ 必须说明认证和授权方案（如 JWT/OAuth2）"
+    success_message: "✅ 认证授权方案已说明"
+    weight: 10
+
+  # ========== 性能考虑 ==========
+  - name: 性能设计说明
+    type: checklist
+    field: performance_checklist
+    items:
+      - 缓存策略
+      - 分页设计
+      - 并发处理
+      - 限流方案
+      - 数据库查询优化
+    min_pass: 3
+    message: "⚠️ 性能设计不完整，至少覆盖 3 个方面"
+    success_message: "✅ 性能设计说明充分"
+    weight: 15
+
+  - name: 性能指标定义
+    type: pattern_check
+    field: performance_metrics
+    pattern: "\\d+.*ms|\\d+.*QPS|\\d+.*TPS|\\d+.*%"
+    min_matches: 1
+    message: "⚠️ 应定义可量化的性能指标（响应时间、QPS 等）"
+    weight: 10
+
+  # ========== 文档质量 ==========
+  - name: AI 初稿检查
+    type: required_field
+    field: ai_generated
+    required: true
+    message: "❌ 技术方案必须包含 AI 生成标识和初稿内容"
+    success_message: "✅ AI 初稿标识存在"
+    weight: 10
+
+  - name: 变更记录
+    type: required_field
+    field: 变更记录
+    required: false
+    message: "⚠️ 建议添加变更记录以便追溯"
+    success_message: "✅ 变更记录已添加"
+    weight: 5
+
+# ========== 通过标准 ==========
+pass_criteria:
+  min_total_score: 70  # 总分至少 70 分
+  required_checks:     # 必须通过的检查
+    - 架构设计图检查
+    - API 接口定义完整
+    - 数据库设计说明
+    - 安全设计审查
+
+# ========== 失败处理 ==========
+on_fail:
+  action: block          # block: 阻止进入下一环节 / warn: 仅警告
+  notify:
+    - type: dingtalk
+      target: tech_group
+      template: |
+        🔔 技术方案门禁检查未通过
+        
+        📄 文档：{{document_name}}
+        👤 作者：{{author}}
+        ❌ 失败项：{{failed_checks}}
+        
+        请及时修改后重新提交。
+    - type: teambition
+      action: create_task
+      assignee: {{author}}
+      title: "技术方案门禁检查未通过：{{document_name}}"
+  retry_allowed: true
+  retry_cooldown_minutes: 5
+
+# ========== 成功处理 ==========
+on_success:
+  notify:
+    - type: dingtalk
+      target: tech_group
+      template: |
+        ✅ 技术方案门禁检查通过
+        
+        📄 文档：{{document_name}}
+        👤 作者：{{author}}
+        📊 得分：{{total_score}}
+        
+        可以进入评审环节。
+  label:
+    - "tech-design-approved"
+    - "ai-generated"
+
+# ========== 豁免规则 ==========
+exemptions:
+  - condition: emergency_release
+    approver: tech_director
+    valid_hours: 24
+    description: "紧急发布可由技术总监豁免"
+  - condition: minor_update
+    change_threshold: 10  # 变更内容少于 10%
+    description: "微小更新可豁免部分检查"

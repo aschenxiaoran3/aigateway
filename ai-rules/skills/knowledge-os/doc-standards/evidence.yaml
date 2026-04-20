@@ -1,0 +1,9 @@
+version: "1.0.0"
+document: evidence_contract
+tiers:
+  - id: tier1_coverage
+    title: 页面级证据清单
+    required_fields: [source_files, source_apis, source_tables, source_symbols]
+  - id: tier2_citation
+    title: 段落级引用（Phase 2）
+    required: false

@@ -1,0 +1,10 @@
+{
+  "title": "PRD Input",
+  "type": "object",
+  "required": ["bundle_id", "artifact_type", "content_text"],
+  "properties": {
+    "bundle_id": { "type": "integer" },
+    "artifact_type": { "type": "string", "const": "prd" },
+    "content_text": { "type": "string" }
+  }
+}

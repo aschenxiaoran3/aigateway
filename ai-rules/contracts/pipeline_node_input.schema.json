@@ -1,0 +1,13 @@
+{
+  "title": "Pipeline Node Input",
+  "type": "object",
+  "required": ["trace_id", "project_code", "node_input"],
+  "properties": {
+    "trace_id": { "type": "string" },
+    "project_code": { "type": "string" },
+    "node_input": { "type": "object" },
+    "approval_context": { "type": ["object", "null"] },
+    "retrieval_context": { "type": ["array", "null"] },
+    "evidence_refs": { "type": ["array", "null"] }
+  }
+}

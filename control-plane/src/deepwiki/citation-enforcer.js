@@ -51,8 +51,15 @@ function buildEnforcerContext(options = {}) {
     }
   }
 
+  let resolvedMode;
+  if (options.mode === 'strict' || options.mode === 'lenient') {
+    resolvedMode = options.mode;
+  } else {
+    resolvedMode = DEFAULT_MODE;
+  }
+
   return {
-    mode: options.mode === 'strict' ? 'strict' : DEFAULT_MODE,
+    mode: resolvedMode,
     allowedFiles,
     lineCounts,
     pathValidation: options.pathValidation !== false,
@@ -187,7 +194,12 @@ function enforceSlot({ text, citations, minCitations = 1, ctx }) {
   const enforced = enforceCitations(citations, ctx);
   const requiredMin = Math.max(0, Number(minCitations) || 0);
   const hasEnoughCitations = enforced.accepted.length >= requiredMin;
-  const mode = ctx && ctx.mode === 'strict' ? 'strict' : DEFAULT_MODE;
+  let mode;
+  if (ctx && (ctx.mode === 'strict' || ctx.mode === 'lenient')) {
+    mode = ctx.mode;
+  } else {
+    mode = DEFAULT_MODE;
+  }
   const shouldDrop = mode === 'strict' && !hasEnoughCitations;
   return {
     text: shouldDrop ? '' : text,

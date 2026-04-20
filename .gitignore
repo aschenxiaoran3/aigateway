@@ -10,11 +10,9 @@ logs/
 dist/
 coverage/
 data/
-# Only match top-level runtime storage directories; do NOT match nested
-# source directories like control-plane/src/deepwiki/core/storage/.
-/storage/
-/*/storage/
-!/control-plane/src/**/storage/
+storage/
+!control-plane/src/deepwiki/core/storage/
+!control-plane/src/deepwiki/core/storage/file-store.js
 tmp/
 .venv/
 .pytest_cache/

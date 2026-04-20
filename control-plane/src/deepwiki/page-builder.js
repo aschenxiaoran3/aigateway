@@ -955,13 +955,28 @@ function buildBusinessLogicFromInventory(inventory) {
   const validationAnnotations = Array.isArray(inventory.validation_annotations) ? inventory.validation_annotations : [];
   const assertionStatements = Array.isArray(inventory.assertion_statements) ? inventory.assertion_statements : [];
   const calculationHints = Array.isArray(inventory.calculation_hints) ? inventory.calculation_hints : [];
+  const sqlTables = Array.isArray(inventory.sql_tables) ? inventory.sql_tables : [];
+  const erModel = sqlTables
+    .filter((t) => t && (t.table_name || t.table) && Array.isArray(t.columns))
+    .map((t) => ({
+      table: t.table_name || t.table,
+      path: t.path,
+      columns: (t.columns || []).map((c) => ({
+        name: c.name,
+        notNull: Boolean(c.notNull),
+        primary: Boolean(c.primary),
+        unique: Boolean(c.unique),
+        comment: c.comment || '',
+      })),
+    }));
   const hasAny = ruleComments.length
     || testMethods.length
     || throwStatements.length
     || exceptionHandlers.length
     || validationAnnotations.length
     || assertionStatements.length
-    || calculationHints.length;
+    || calculationHints.length
+    || erModel.length;
   if (!hasAny) return emptyAssets;
   const topology = {
     repos: [
@@ -982,7 +997,7 @@ function buildBusinessLogicFromInventory(inventory) {
     return deriveBusinessLogicAssets({
       config: {},
       topology,
-      dataContracts: { apiContracts: [], erModel: [], eventCatalog: [] },
+      dataContracts: { apiContracts: [], erModel, eventCatalog: [] },
       semantic: { businessTerms: [], businessActions: [], stateMachines: [] },
       lexicon,
     });
@@ -1171,10 +1186,16 @@ function renderBusinessLogicPage(assets, options = {}) {
     })
     .filter(Boolean);
 
+  // In strict mode, stateMachinesInput.map preserves length even when every
+  // transition is dropped; we need to check whether any substantive content
+  // remains (at least one transition across any machine).
+  const hasStateMachineContent = stateMachines.some(
+    (m) => Array.isArray(m.transitions) && m.transitions.length > 0,
+  );
   if (
     !rules.length
     && !testEvidence.length
-    && !stateMachines.length
+    && !hasStateMachineContent
     && !scenarios.length
     && !calculations.length
     && !failureModes.length
@@ -1204,10 +1225,16 @@ function renderBusinessLogicPage(assets, options = {}) {
     lines.push('');
   }
 
-  if (stateMachines.length) {
+  // Only emit the section when at least one machine still has transitions
+  // after strict-mode citation enforcement; otherwise skip to avoid empty
+  // "## 状态机与守卫 / ### Entity" headers with no body.
+  const renderableStateMachines = stateMachines.filter(
+    (m) => Array.isArray(m.transitions) && m.transitions.length > 0,
+  );
+  if (renderableStateMachines.length) {
     lines.push('## 状态机与守卫');
     lines.push('');
-    stateMachines.slice(0, 8).forEach((machine) => {
+    renderableStateMachines.slice(0, 8).forEach((machine) => {
       lines.push(`### ${machine.entity || '状态机'}`);
       const states = Array.isArray(machine.states) ? machine.states : [];
       if (states.length) {
